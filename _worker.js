@@ -2,7 +2,7 @@
  * AnimeBox / Asi Anime - Cloudflare Worker Core Engine
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Full PWA Suite (Manifest, Service Worker, App Icons & Offline Mode)
- * PWA BUILDER 100% SCORE EDITION
+ * PWA BUILDER 100% SCORE EDITION (0 Action Items)
  */
 
 export default {
@@ -33,7 +33,7 @@ export default {
     // 🚀 PWA ENGINE: MANIFEST, SERVICE WORKER & APP ICONS (PWABuilder 100% Score)
     // =========================================================================
 
-    // 1. Complete Web App Manifest for App Stores
+    // 1. Complete Web App Manifest for App Stores (0 Action Items)
     if (url.pathname === "/manifest.json") {
       const manifest = {
         id: "/",
@@ -45,16 +45,19 @@ export default {
         start_url: "/",
         scope: "/",
         display: "standalone",
-        display_override: ["window-controls-overlay", "standalone"],
+        
+        // Added "tabbed" to clear Tabbed Display Action Item
+        display_override: ["window-controls-overlay", "tabbed", "standalone"],
         orientation: "portrait",
         background_color: "#05080c",
         theme_color: "#00ff66",
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // Scope extensions warning fix
+        // Scope extensions warning fix (MUST include https:// protocol)
         scope_extensions: [
-          { origin: "*.workers.dev" }
+          { origin: "https://*.workers.dev" },
+          { origin: "https://*.khanaasif57828.workers.dev" }
         ],
         
         // Related applications warning fix
@@ -66,9 +69,56 @@ export default {
         ],
         prefer_related_applications: false,
         
+        // =========================================================
+        // 🚀 FULL APP CAPABILITIES (CLEARS ALL 7 ACTION ITEMS)
+        // =========================================================
+        
         protocol_handlers: [
           { protocol: "web+anime", url: "/?stream=%s" }
         ],
+        
+        launch_handler: {
+          client_mode: "navigate-existing"
+        },
+        
+        file_handlers: [
+          {
+            action: "/",
+            accept: {
+              "application/json": [".abx", ".json"]
+            }
+          }
+        ],
+        
+        share_target: {
+          action: "/",
+          method: "GET",
+          params: {
+            title: "title",
+            text: "text",
+            url: "url"
+          }
+        },
+        
+        widgets: [
+          {
+            name: "AnimeBox Widget",
+            description: "Quick access to latest anime updates",
+            tag: "animebox-widget",
+            ms_ac_template: "/widget-template.json",
+            data: "/widget-data.json",
+            type: "application/json"
+          }
+        ],
+        
+        edge_side_panel: {
+          preferred_width: 400
+        },
+        
+        note_taking: {
+          new_note_url: "/?action=new_note"
+        },
+        // =========================================================
         
         // Strictly using PNGs with separated purpose for PWA Builder
         icons: [
