@@ -1,6 +1,7 @@
 /**
  * AnimeBox / Asi Anime - Cloudflare Worker Core Engine
- * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners
+ * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
+ * Full PWA Suite (Manifest, Service Worker, App Icons & Offline Mode)
  */
 
 export default {
@@ -28,6 +29,114 @@ export default {
     };
 
     // =========================================================================
+    // 🚀 PWA ENGINE: MANIFEST, SERVICE WORKER & APP ICONS
+    // =========================================================================
+
+    // 1. Web App Manifest
+    if (url.pathname === "/manifest.json") {
+      const manifest = {
+        name: "AnimeBox - Ultimate Anime & Movie Portal",
+        short_name: "AnimeBox",
+        description: "Watch and download high-definition anime, dramas, and movies with high-speed streaming and VIP pass support.",
+        start_url: "/",
+        scope: "/",
+        display: "standalone",
+        orientation: "portrait",
+        background_color: "#05080c",
+        theme_color: "#00ff66",
+        icons: [
+          {
+            src: "/icon-192.svg",
+            sizes: "192x192",
+            type: "image/svg+xml",
+            purpose: "any maskable"
+          },
+          {
+            src: "/icon-512.svg",
+            sizes: "512x512",
+            type: "image/svg+xml",
+            purpose: "any maskable"
+          }
+        ]
+      };
+      return new Response(JSON.stringify(manifest), {
+        headers: {
+          "Content-Type": "application/manifest+json; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=3600"
+        }
+      });
+    }
+
+    // 2. Service Worker (`sw.js`)
+    if (url.pathname === "/sw.js") {
+      const swScript = `
+        const CACHE_NAME = 'animebox-pwa-v1';
+        const STATIC_ASSETS = [
+          '/',
+          '/manifest.json',
+          'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css'
+        ];
+
+        self.addEventListener('install', (e) => {
+          e.waitUntil(
+            caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
+          );
+          self.skipWaiting();
+        });
+
+        self.addEventListener('activate', (e) => {
+          e.waitUntil(
+            caches.keys().then(keys => Promise.all(
+              keys.map(k => k !== CACHE_NAME ? caches.delete(k) : null)
+            ))
+          );
+          self.clients.claim();
+        });
+
+        self.addEventListener('fetch', (e) => {
+          if (e.request.method !== 'GET') return;
+          e.respondWith(
+            caches.match(e.request).then(cached => {
+              const fetchPromise = fetch(e.request).then(res => {
+                if (res && res.status === 200 && e.request.url.startsWith('http')) {
+                  const resClone = res.clone();
+                  caches.open(CACHE_NAME).then(cache => cache.put(e.request, resClone));
+                }
+                return res;
+              }).catch(() => cached);
+              return cached || fetchPromise;
+            })
+          );
+        });
+      `;
+      return new Response(swScript, {
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Service-Worker-Allowed": "/"
+        }
+      });
+    }
+
+    // 3. Dynamic App Icons
+    if (url.pathname === "/icon-192.svg" || url.pathname === "/icon-512.svg") {
+      const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+        <defs>
+          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#00ff66" />
+            <stop offset="100%" stop-color="#00f2fe" />
+          </linearGradient>
+        </defs>
+        <rect width="512" height="512" rx="100" fill="#05080c"/>
+        <rect x="20" y="20" width="472" height="472" rx="90" fill="none" stroke="url(#grad)" stroke-width="14"/>
+        <path d="M190 140 L370 256 L190 372 Z" fill="url(#grad)"/>
+      </svg>`;
+      return new Response(svgIcon, {
+        headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }
+      });
+    }
+
+    // =========================================================================
     // API ENDPOINTS
     // =========================================================================
 
@@ -43,7 +152,7 @@ export default {
       return json({ posts, settings });
     }
 
-    // 2. Save / Update Post (All Metadata Fields)
+    // 2. Save / Update Post
     if (url.pathname === "/api/posts" && method === "POST") {
       const body = await request.json();
       let posts = (await kvGet("posts", [])) || [];
@@ -209,7 +318,7 @@ export default {
       }
     }
 
-    // 9. Save Settings & Decrypt Keys
+    // 9. Save Settings
     if (url.pathname === "/api/settings" && method === "POST") {
       const body = await request.json();
       if (body.settings) await kvSet("settings", body.settings);
@@ -232,6 +341,17 @@ function renderFullAppHTML() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>AnimeBox - Ultimate Anime & Movie Portal</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="description" content="Watch and download high-quality anime, dramas, and movies with instant streaming and VIP pass support.">
+  <meta name="theme-color" content="#00ff66">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AnimeBox">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.svg">
+  <link rel="icon" type="image/svg+xml" href="/icon-192.svg">
+
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     :root {
@@ -386,7 +506,7 @@ function renderFullAppHTML() {
           <button class="ep-btn" onclick="setAdminTab('cfg')">Settings</button>
         </div>
 
-        <!-- TAB 1: ADD POST (WITH AUTO-DETECT PARSER) -->
+        <!-- TAB 1: ADD POST -->
         <div id="tabPost">
           <div class="form-group" style="background: rgba(0,255,102,0.04); padding:10px; border-radius:8px; border:1px dashed var(--border);">
             <label style="color:var(--primary);"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto Post Fill Parser</label>
@@ -511,6 +631,15 @@ function renderFullAppHTML() {
   <script>
     let appData = { posts: [], settings: {} };
     let currentPost = null;
+
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('PWA Service Worker Active:', reg.scope))
+          .catch(err => console.log('SW registration failed:', err));
+      });
+    }
 
     window.onload = async () => {
       await loadData();
@@ -657,7 +786,7 @@ function renderFullAppHTML() {
       renderGrid(filtered);
     }
 
-    // Auto Post Fill Parser Logic
+    // Auto Post Fill Parser
     function handleAutoDetect() {
       const text = document.getElementById("autoDetectInp").value.trim();
       if (!text) return;
@@ -843,4 +972,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-}
+  }
