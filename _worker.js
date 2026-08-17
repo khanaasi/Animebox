@@ -32,29 +32,32 @@ export default {
     // 🚀 PWA ENGINE: MANIFEST, SERVICE WORKER & APP ICONS
     // =========================================================================
 
-    // 1. Web App Manifest
+    // 1. Complete Web App Manifest for App Stores
     if (url.pathname === "/manifest.json") {
       const manifest = {
+        id: "/",
         name: "AnimeBox - Ultimate Anime & Movie Portal",
         short_name: "AnimeBox",
         description: "Watch and download high-definition anime, dramas, and movies with high-speed streaming and VIP pass support.",
+        lang: "en",
         start_url: "/",
         scope: "/",
         display: "standalone",
         orientation: "portrait",
         background_color: "#05080c",
         theme_color: "#00ff66",
+        categories: ["entertainment", "video"],
         icons: [
           {
-            src: "/icon-192.svg",
+            src: "https://raw.githubusercontent.com/google/material-design-icons/master/png/action/play_arrow/materialicons/192dp/2x/baseline_play_arrow_black_192dp.png",
             sizes: "192x192",
-            type: "image/svg+xml",
+            type: "image/png",
             purpose: "any maskable"
           },
           {
-            src: "/icon-512.svg",
+            src: "https://raw.githubusercontent.com/google/material-design-icons/master/png/action/play_arrow/materialicons/512dp/2x/baseline_play_arrow_black_512dp.png",
             sizes: "512x512",
-            type: "image/svg+xml",
+            type: "image/png",
             purpose: "any maskable"
           }
         ]
@@ -972,4 +975,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-  }
+          }
