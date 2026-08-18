@@ -1189,4 +1189,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-        }
+          }
