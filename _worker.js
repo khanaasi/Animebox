@@ -61,9 +61,13 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // 2. Scope Extensions Fix (Removed wildcard, used EXACT origin URL)
+        // 2. FIXED - Scope Extensions: Apni hi origin nahi dalni hai
+        // Definition: Scope extensions allow your PWA to define additional URL domains that are considered in-scope
+        // Example: PWA example.com par hai to auth.example.com aur en.example.com add kar sakte ho
+        // Isliye yahan dusri domains daali hai, self origin hataya hai
         scope_extensions: [
-          { origin: "https://animebox.khanaasif57828.workers.dev" }
+          { origin: "https://auth.example.com" },
+          { origin: "https://en.example.com" }
         ],
         
         related_applications: [
@@ -95,15 +99,17 @@ export default {
           params: { title: "title", text: "text", url: "url" }
         },
         
-        // 3. Widgets Fix (Added strictly required icons array for widgets)
+        // 3. FIXED - Widgets: Adaptive cards with text, images, and actions related to your app. On Windows, widgets appear over the desktop when the user clicks the widget taskbar icon or presses Win+W.
+        // ms_ac_template -> template (new spec) + update field added
         widgets: [
           {
             name: "AnimeBox Widget",
             description: "Quick access to latest anime updates",
             tag: "animebox-widget",
-            ms_ac_template: "/widget-template.json",
+            template: "/widget-template.json",
             data: "/widget-data.json",
             type: "application/json",
+            update: 86400,
             icons: [
               { src: "/icon-192.png", sizes: "192x192", type: "image/png" }
             ]
@@ -237,6 +243,33 @@ export default {
           "Service-Worker-Allowed": "/"
         }
       });
+    }
+
+    // FIXED: Widgets ke liye required template aur data files - Adaptive Cards
+    if (url.pathname === "/widget-template.json") {
+      return json({
+        type: "AdaptiveCard",
+        version: "1.5",
+        body: [
+          { type: "TextBlock", text: "AnimeBox", weight: "Bolder", size: "Medium" },
+          { type: "TextBlock", text: "${title}", wrap: true },
+          { type: "Image", url: "${imageUrl}", size: "Medium" }
+        ],
+        actions: [
+          { type: "Action.OpenUrl", title: "Open App", url: "/" }
+        ]
+      });
+    }
+
+    if (url.pathname === "/widget-data.json") {
+      return json({
+        title: "Latest Anime Updates",
+        imageUrl: "/icon-192.png"
+      });
+    }
+
+    if (url.pathname === "/widget-data.json" || url.pathname === "/widget-template.json") {
+      // fallback already handled above
     }
 
     if (url.pathname.includes("icon-192")) {
