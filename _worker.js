@@ -1,7 +1,8 @@
 /**
- * AnimeBox / Asi Anime - Cloudflare Worker Core Engine (ULTIMATE EDITION)
- * Features: Auto-Detect Parser, Telegram CDN Upload/Auto-Delete, Netflix UI, 
- * PWA 100% Score, Premium Auto-Expiry, Paid Requests, Shortener Rotation.
+ * AnimeBox / Asi Anime - Cloudflare Worker Core Engine
+ * Premium PWA APK Edition - 100% PWABuilder Score
+ * Features: Auto-Detect Parser, Category->Genre Filtering, Telegram Bot Automation, 
+ * VIP Auto-Delete, Advanced Shortener Fallbacks, Imbed Player Support.
  */
 
 export default {
@@ -16,169 +17,189 @@ export default {
       });
 
     const kvGet = async (key, defaultVal = null) => {
-      if (!env.ANIME_KV) return defaultVal;
-      const val = await env.ANIME_KV.get(key, "json");
-      return val !== null ? val : defaultVal;
+      if (env.ANIME_KV) {
+        const val = await env.ANIME_KV.get(key, "json");
+        return val !== null ? val : defaultVal;
+      }
+      return defaultVal;
     };
-    
     const kvSet = async (key, val) => {
-      if (env.ANIME_KV) await env.ANIME_KV.put(key, JSON.stringify(val));
+      if (env.ANIME_KV) {
+        await env.ANIME_KV.put(key, JSON.stringify(val));
+      }
+    };
+
+    // Auto-Delete Expired Premium Users in Background
+    ctx.waitUntil((async () => {
+      if (env.ANIME_KV) {
+        const users = (await kvGet("premium_users", [])) || [];
+        const now = new Date();
+        const validUsers = users.filter(u => new Date(u.expires_at) > now);
+        if (users.length !== validUsers.length) {
+          await kvSet("premium_users", validUsers);
+        }
+      }
+    })());
+
+    // Send Telegram Notification Helper
+    const notifyTelegram = async (settings, message, imageUrl = null) => {
+      if (!settings.bot_token || !settings.chat_id) return;
+      try {
+        const baseUrl = `https://api.telegram.org/bot${settings.bot_token}`;
+        if (imageUrl && imageUrl.startsWith("http")) {
+          await fetch(`${baseUrl}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: settings.chat_id, photo: imageUrl, caption: message, parse_mode: 'HTML' })
+          });
+        } else {
+          await fetch(`${baseUrl}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: settings.chat_id, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
+          });
+        }
+      } catch (e) { console.error("Telegram Error", e); }
     };
 
     // =========================================================================
-    // 🚀 1. PWA ENGINE: 100% SCORE (No Scope Extensions Error)
+    // 🚀 PWA ENGINE: MANIFEST, SW, WIDGETS
     // =========================================================================
 
     if (url.pathname === "/manifest.json") {
       const manifest = {
-        id: "/?source=pwa",
-        name: "AnimeBox - Watch Hindi Sub/Dub Anime & K-Drama",
+        id: "/",
+        name: "AnimeBox - Ultimate Anime Portal",
         short_name: "AnimeBox",
-        description: "Stream or download free Anime Hindi Sub/Dub, Korean Drama (K-Drama), and Chinese Donghua.",
+        description: "Watch and download high-definition anime, dramas, and movies with high-speed streaming.",
         lang: "en-US",
         dir: "ltr",
-        start_url: "/?source=pwa",
+        start_url: "/",
         scope: "/",
         display: "standalone",
-        orientation: "portrait",
-        background_color: "#05080c",
+        display_override: ["tabbed", "window-controls-overlay", "standalone"],
+        orientation: "portrait-primary",
+        background_color: "#030708",
         theme_color: "#00ff66",
-        categories: ["entertainment", "video", "multimedia"],
-        iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
-        launch_handler: { client_mode: "navigate-existing" },
+        categories: ["entertainment", "video"],
+        
+        // PWABUILDER FIXED: Scope Extensions attached perfectly!
+        scope_extensions: [
+          { origin: "*.workers.dev" },
+          { origin: "*.t.me" },
+          { origin: "*.telegram.org" },
+          { origin: "*.youtube.com" }
+        ],
+
         icons: [
-          { src: "https://placehold.co/192x192/05080c/00ff66.png?text=AB", sizes: "192x192", type: "image/png", purpose: "any maskable" },
-          { src: "https://placehold.co/512x512/05080c/00ff66.png?text=AB", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/icon-192-maskable.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
         ],
         screenshots: [
-          { src: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=720&h=1280&fit=crop", sizes: "720x1280", type: "image/jpeg", form_factor: "narrow" },
-          { src: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1280&h=720&fit=crop", sizes: "1280x720", type: "image/jpeg", form_factor: "wide" }
+          { src: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1280&h=720&fit=crop", sizes: "1280x720", type: "image/jpeg", form_factor: "wide", label: "Desktop View" },
+          { src: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=720&h=1280&fit=crop", sizes: "720x1280", type: "image/jpeg", form_factor: "narrow", label: "Mobile View" }
+        ],
+        shortcuts: [
+          { name: "Home", short_name: "Home", url: "/", icons: [{ src: "/icon-192.png", sizes: "192x192" }] },
+          { name: "Watchlist", short_name: "Watchlist", url: "/#watchlist", icons: [{ src: "/icon-192.png", sizes: "192x192" }] }
         ]
       };
-      return new Response(JSON.stringify(manifest), { headers: { "Content-Type": "application/manifest+json" } });
+      return new Response(JSON.stringify(manifest), {
+        headers: { "Content-Type": "application/manifest+json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+      });
     }
 
     if (url.pathname === "/sw.js") {
       const swScript = `
-        const CACHE = 'animebox-v2-advance';
-        self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/']))));
-        self.addEventListener('fetch', e => {
+        const CACHE_NAME = 'animebox-pwa-v6';
+        self.addEventListener('install', (e) => { self.skipWaiting(); });
+        self.addEventListener('activate', (e) => { self.clients.claim(); });
+        self.addEventListener('fetch', (e) => {
           if (e.request.method !== 'GET') return;
-          e.respondWith(caches.match(e.request).then(res => res || fetch(e.request)));
+          e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
         });
       `;
-      return new Response(swScript, { headers: { "Content-Type": "application/javascript" } });
+      return new Response(swScript, { headers: { "Content-Type": "application/javascript; charset=utf-8" } });
+    }
+
+    if (url.pathname.includes("icon-192") || url.pathname.includes("icon-512")) {
+      const size = url.pathname.includes("512") ? "512x512" : "192x192";
+      return Response.redirect(`https://placehold.co/${size}/030708/00ff66.png?text=AB`, 301);
     }
 
     // =========================================================================
-    // 🚀 2. BACKEND API (Data, Auto-Upload, Telegram, Security)
+    // API ENDPOINTS
     // =========================================================================
 
     if (url.pathname === "/api/data" && method === "GET") {
       const posts = (await kvGet("posts", [])) || [];
       const settings = (await kvGet("settings", {})) || {};
       const shorteners = (await kvGet("shorteners", [])) || [];
-      return json({ posts, settings, shorteners });
+      const paid_requests = (await kvGet("paid_requests", [])) || [];
+      return json({ posts, settings, shorteners, paid_requests });
     }
 
-    if (url.pathname === "/api/admin-data" && method === "POST") {
-      const body = await request.json();
-      const settings = (await kvGet("settings", {})) || {};
-      if (body.pin !== (settings.admin_password || "admin123")) return json({ error: "Unauthorized" }, 401);
-      
-      return json({
-        posts: await kvGet("posts", []),
-        premium: await kvGet("premium_users", []),
-        paid_requests: await kvGet("paid_requests", []),
-        shorteners: await kvGet("shorteners", []),
-        settings: settings
-      });
-    }
-
-    // 📤 TELEGRAM FILE UPLOAD (Like app.py but in Worker)
-    if (url.pathname === "/api/upload-telegram" && method === "POST") {
-      try {
-        const formData = await request.formData();
-        const file = formData.get("file");
-        const settings = (await kvGet("settings", {})) || {};
-        
-        if (!settings.bot_token || !settings.chat_id) return json({ error: "Set Bot Token & Chat ID in settings" }, 400);
-
-        const tgForm = new FormData();
-        tgForm.append("chat_id", settings.chat_id);
-        tgForm.append("photo", file);
-
-        const tgRes = await fetch(`https://api.telegram.org/bot${settings.bot_token}/sendPhoto`, { method: "POST", body: tgForm });
-        const tgData = await tgRes.json();
-        
-        if (!tgData.ok) return json({ error: tgData.description }, 400);
-
-        // Get Direct File URL from Telegram
-        const fileId = tgData.result.photo[tgData.result.photo.length - 1].file_id;
-        const fileRes = await fetch(`https://api.telegram.org/bot${settings.bot_token}/getFile?file_id=${fileId}`);
-        const fileData = await fileRes.json();
-        const directUrl = `https://api.telegram.org/file/bot${settings.bot_token}/${fileData.result.file_path}`;
-
-        return json({ success: true, url: directUrl, tg_message_id: tgData.result.message_id });
-      } catch (err) {
-        return json({ error: err.message }, 500);
-      }
-    }
-
-    // CREATE POST
     if (url.pathname === "/api/posts" && method === "POST") {
       const body = await request.json();
       let posts = (await kvGet("posts", [])) || [];
       const newPost = {
-        id: "p_" + Date.now(),
+        id: body.id || "p_" + Date.now(),
         name: body.name || "Untitled",
         image_url: body.image_url || "",
-        category: body.category || "Anime",
+        category: body.category || "Uncategorized",
         genres: body.genres || "",
         season: body.season || "",
-        short_story: body.short_story || "",
-        release_date: body.release_date || "",
-        tg_message_id: body.tg_message_id || null,
+        story: body.story || "",
+        release: body.release || "",
         updatedAt: Date.now()
       };
+      posts = posts.filter(p => p.id !== newPost.id);
       posts.unshift(newPost);
       await kvSet("posts", posts);
+
+      // Trigger Telegram Alert
+      const settings = (await kvGet("settings", {})) || {};
+      const msg = `🚀 <b>New Release Uploaded!</b>\n\n🎬 <b>Name:</b> ${newPost.name}\n📺 <b>Category:</b> ${newPost.category}\n🎭 <b>Genre:</b> ${newPost.genres}\n📅 <b>Season/Year:</b> ${newPost.season} (${newPost.release})\n\n📖 <b>Story:</b> ${newPost.story}\n\n👉 <b>Watch & Download Now!</b>`;
+      ctx.waitUntil(notifyTelegram(settings, msg, newPost.image_url));
+
       return json({ success: true, post: newPost });
     }
 
-    // DELETE POST (And auto delete from Telegram)
     if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
       const id = url.pathname.split("/").pop();
       let posts = (await kvGet("posts", [])) || [];
-      const settings = (await kvGet("settings", {})) || {};
-      const post = posts.find(p => p.id === id);
-      
-      if (post && post.tg_message_id && settings.bot_token && settings.chat_id) {
-        await fetch(`https://api.telegram.org/bot${settings.bot_token}/deleteMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: settings.chat_id, message_id: post.tg_message_id })
-        }).catch(()=>console.log("TG Delete error"));
-      }
-
       posts = posts.filter(p => p.id !== id);
       await kvSet("posts", posts);
-      await kvSet(`ep_${id}`, []); 
+      await kvSet(`ep_${id}`, []);
       return json({ success: true });
     }
 
-    // EPISODES
     if (url.pathname === "/api/episodes" && method === "GET") {
       const postId = url.searchParams.get("post_id");
-      return json({ episodes: (await kvGet(`ep_${postId}`, [])) || [] });
+      const episodes = (await kvGet(`ep_${postId}`, [])) || [];
+      return json({ episodes });
     }
+
     if (url.pathname === "/api/episodes" && method === "POST") {
       const body = await request.json();
       let episodes = (await kvGet(`ep_${body.post_id}`, [])) || [];
-      episodes.push({ id: "ep_" + Date.now(), ...body });
+      const newEp = {
+        id: body.id || "ep_" + Date.now(),
+        post_id: body.post_id,
+        label: body.label || "01",
+        season: body.season || "Season 1",
+        quality: body.quality || "HD (720p)",
+        play_link: body.play_link || "",
+        download_link: body.download_link || ""
+      };
+      episodes = episodes.filter(e => e.id !== newEp.id);
+      episodes.push(newEp);
       await kvSet(`ep_${body.post_id}`, episodes);
-      return json({ success: true });
+      return json({ success: true, episode: newEp });
     }
+
     if (url.pathname.startsWith("/api/episodes/") && method === "DELETE") {
       const epId = url.pathname.split("/").pop();
       const postId = url.searchParams.get("post_id");
@@ -188,645 +209,702 @@ export default {
       return json({ success: true });
     }
 
-    // DECRYPT LINK (Paid Requests)
-    if (url.pathname === "/api/decrypt") {
-      const code = url.searchParams.get("code");
-      const reqs = (await kvGet("paid_requests", [])) || [];
-      const item = reqs.find(r => r.password === code);
-      if (item) return json({ success: true, url: item.original_link });
-      return json({ error: "Invalid Key" }, 404);
-    }
-
-    // PREMIUM AUTH
-    if (url.pathname === "/api/premium-auth" && method === "POST") {
-      const body = await request.json();
-      let users = (await kvGet("premium_users", [])) || [];
-      const now = new Date();
-      users = users.filter(u => new Date(u.expires_at) > now); // Auto clean expired
-      await kvSet("premium_users", users);
-
-      const user = users.find(u => u.gmail === body.email && u.password === body.password);
-      if (user) return json({ success: true, token: user.token });
-      return json({ error: "Invalid Credentials or Expired" }, 401);
-    }
-
-    // LINK GENERATOR (Shorteners & Premium Bypass)
+    // Advanced Shortener Logic with Direct Route Bypass
     if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id");
       const postId = url.searchParams.get("post_id");
-      const token = url.searchParams.get("token");
+      const userKey = url.searchParams.get("key");
 
       const episodes = (await kvGet(`ep_${postId}`, [])) || [];
       const ep = episodes.find(e => e.id === epId);
-      if (!ep || !ep.original_link) return json({ error: "No link found" }, 404);
+      if (!ep) return json({ error: "Episode not found" }, 404);
 
-      if (token) {
-        const users = (await kvGet("premium_users", [])) || [];
-        const validUser = users.find(u => u.token === token && new Date(u.expires_at) > new Date());
-        if (validUser) return json({ url: ep.original_link, direct: true });
+      const targetUrl = ep.download_link || ep.play_link;
+      if (!targetUrl) return json({ error: "Empty link" }, 400);
+
+      // Check VIP Key
+      if (userKey) {
+        const premiumUsers = (await kvGet("premium_users", [])) || [];
+        const user = premiumUsers.find(u => u.key === userKey);
+        if (user && new Date(user.expires_at) > new Date()) {
+          return json({ direct: true, url: targetUrl });
+        }
       }
 
+      // Shortener Generation
       const shorteners = (await kvGet("shorteners", [])) || [];
-      if (shorteners.length > 0) {
-        const sh = shorteners[Math.floor(Math.random() * shorteners.length)];
-        const domain = sh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
-        try {
-          const res = await fetch(`https://${domain}/api?api=${sh.api_key}&url=${encodeURIComponent(ep.original_link)}&format=text`);
-          const shortLink = (await res.text()).trim();
-          if (shortLink.startsWith("http")) return json({ url: shortLink, direct: false });
-        } catch(e) {}
+      if (shorteners.length === 0) return json({ direct: true, url: targetUrl });
+
+      const activeSh = shorteners[Math.floor(Math.random() * shorteners.length)];
+      try {
+        const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
+        const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`;
+        
+        const res = await fetch(apiEndpoint);
+        const shortLink = (await res.text()).trim();
+        if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink });
+
+        // Fallback CORS Proxy if primary fails
+        const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`);
+        const proxyData = await proxyRes.json();
+        if (proxyData.contents && proxyData.contents.trim().startsWith("http")) {
+          return json({ direct: false, url: proxyData.contents.trim() });
+        }
+      } catch (err) {
+        console.error("Shortener logic failed:", err);
       }
-      return json({ url: ep.original_link, direct: true });
+      return json({ direct: true, url: targetUrl });
     }
 
-    // SAVE SETTINGS (Admin Panel)
+    if (url.pathname === "/api/decrypt-link") {
+      const code = url.searchParams.get("code");
+      const paidRequests = (await kvGet("paid_requests", [])) || [];
+      const item = paidRequests.find(r => r.password === code);
+      if (item) return json({ success: true, url: item.original_link });
+      return json({ success: false, message: "Invalid or expired key" }, 404);
+    }
+
+    if (url.pathname === "/api/premium" && method === "POST") {
+      const body = await request.json();
+      let users = (await kvGet("premium_users", [])) || [];
+      const expiry = new Date();
+      expiry.setDate(expiry.getDate() + parseInt(body.days || 30));
+
+      const newUser = {
+        id: "usr_" + Date.now(),
+        email: body.email.toLowerCase().trim(),
+        key: body.key.trim(),
+        expires_at: expiry.toISOString()
+      };
+
+      users = users.filter(u => u.email !== newUser.email && u.key !== newUser.key);
+      users.unshift(newUser);
+      await kvSet("premium_users", users);
+
+      // Telegram Automation
+      const settings = (await kvGet("settings", {})) || {};
+      const tgMsg = `💎 <b>New VIP Pass Created!</b>\n\n📧 <b>User:</b> ${newUser.email}\n🔑 <b>Access Key:</b> <code>${newUser.key}</code>\n⏳ <b>Expires:</b> ${expiry.toLocaleDateString()}\n\n<i>Bot will auto-delete access when expired.</i>`;
+      ctx.waitUntil(notifyTelegram(settings, tgMsg));
+
+      return json({ success: true, user: newUser });
+    }
+
+    if (url.pathname.startsWith("/api/premium/") && method === "DELETE") {
+      const email = url.pathname.split("/").pop();
+      let users = (await kvGet("premium_users", [])) || [];
+      users = users.filter(u => u.email !== email);
+      await kvSet("premium_users", users);
+      return json({ success: true });
+    }
+
     if (url.pathname === "/api/settings" && method === "POST") {
       const body = await request.json();
       if (body.settings) await kvSet("settings", body.settings);
       if (body.shorteners) await kvSet("shorteners", body.shorteners);
-      if (body.premium_users) await kvSet("premium_users", body.premium_users);
       if (body.paid_requests) await kvSet("paid_requests", body.paid_requests);
       return json({ success: true });
     }
 
-    // 🚀 3. FRONTEND RENDER (HTML/CSS/JS)
-    return new Response(renderFullApp(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+    // Render Frontend
+    return new Response(renderFullAppHTML(), {
+      headers: { "Content-Type": "text/html;charset=UTF-8" }
+    });
   }
 };
 
-function renderFullApp() {
+function renderFullAppHTML() {
   return `<!DOCTYPE html>
-<html lang="hi">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>AnimeBox - Ultimate Anime & Movies</title>
-  <link rel="manifest" href="/manifest.json">
+  <title>AnimeBox - Ultimate Anime & Drama Portal</title>
   <meta name="theme-color" content="#00ff66">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    :root {
-      --bg: #030708; --header: rgba(6,12,10,0.95); --card: rgba(10,20,16,0.7);
-      --primary: #00ff66; --primary-glow: rgba(0,255,102,0.25);
-      --text: #f0f5f2; --muted: #94a3b8; --border: rgba(0,255,102,0.12);
+    :root { 
+      --bg: #030708; 
+      --header: rgba(3, 7, 8, 0.95); 
+      --card-bg: rgba(10, 20, 16, 0.7);
+      --primary: #00ff66; 
+      --primary-glow: rgba(0, 255, 102, 0.25);
+      --text: #f0f5f2; 
+      --text-muted: #94a3b8;
+      --border: rgba(0, 255, 102, 0.12); 
     }
-    * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
-    body { background: var(--bg); color: var(--text); padding-bottom: 70px; overflow-x: hidden; }
-    
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; -webkit-tap-highlight-color: transparent;}
+    body { background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; padding-bottom: 70px;}
+    ::-webkit-scrollbar { display: none; }
 
-    /* Netflix Header */
-    header { background: var(--header); padding: 15px 5%; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); backdrop-filter: blur(15px); }
-    .logo { font-size: 24px; font-weight: 900; color: var(--primary); cursor: pointer; text-shadow: 0 0 10px var(--primary-glow); }
-    .search-bar { flex: 1; margin: 0 20px; position: relative; max-width: 400px; }
-    .search-bar input { width: 100%; padding: 10px 15px 10px 35px; border-radius: 20px; background: rgba(10,20,16,0.8); border: 1px solid var(--border); color: #fff; outline: none; }
-    .search-bar input:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
-    .search-bar i { position: absolute; left: 12px; top: 12px; color: var(--muted); }
-    
-    /* UI Layouts */
-    .section-title { padding: 20px 5% 10px; font-size: 20px; font-weight: 800; text-transform: uppercase; }
-    .section-title span { color: var(--primary); }
-    
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 10px 5% 20px; }
-    .card { background: transparent; cursor: pointer; transition: 0.3s; position: relative; }
-    .card:hover { transform: translateY(-5px); }
-    .card-img-wrap { width: 100%; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; position: relative; border: 1px solid var(--border); }
-    .card:hover .card-img-wrap { border-color: var(--primary); box-shadow: 0 5px 15px var(--primary-glow); }
-    .card-img-wrap img { width: 100%; height: 100%; object-fit: cover; }
-    .badge-cat { position: absolute; bottom: 5px; right: 5px; background: #e67e22; color: #fff; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; }
-    .badge-new { position: absolute; top: 5px; left: 5px; background: var(--primary); color: #000; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 900; }
-    .card-title { padding-top: 8px; font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Header */
+    .header { background: var(--header); padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid var(--border); backdrop-filter: blur(15px); gap: 10px; }
+    .brand { font-size: 22px; font-weight: 900; color: var(--primary); cursor: pointer; text-shadow: 0 0 10px var(--primary-glow); }
+    .search-box { flex: 1; max-width: 400px; position: relative; }
+    .search-box input { width: 100%; padding: 8px 14px 8px 36px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 20px; color: #fff; font-size: 13px; outline: none; }
+    .search-box input:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
+    .search-box i { position: absolute; left: 12px; top: 10px; color: var(--text-muted); font-size: 13px; }
+    .admin-btn { background: rgba(0, 255, 102, 0.1); color: var(--primary); border: 1px solid var(--border); padding: 7px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; }
 
-    /* Detail Page */
-    #detailView { display: none; padding: 20px 5%; max-width: 1000px; margin: auto; }
-    .player-section { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin: 20px 0; border: 1px solid var(--border); }
-    .player-section iframe { width: 100%; height: 100%; border: none; }
-    
-    .ep-group { margin-top: 20px; background: rgba(5,10,7,0.8); padding: 15px; border-radius: 10px; border: 1px solid var(--border); }
-    .ep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 10px; }
-    .ep-btn { background: #0b110e; border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; text-align: center; }
-    .ep-btn:hover { background: var(--primary); color: #000; }
+    /* Dynamic Category & Genre Filter Chips */
+    .chip-container { display: flex; gap: 8px; overflow-x: auto; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+    .chip { background: var(--card-bg); border: 1px solid var(--border); color: var(--text-muted); padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: 0.2s; }
+    .chip.active { background: var(--primary); color: #000; border-color: var(--primary); box-shadow: 0 0 8px var(--primary-glow); }
 
-    /* Modals & Forms */
-    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
-    .modal-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 500px; max-height: 85vh; overflow-y: auto; padding: 20px; position: relative; }
-    .close-btn { position: absolute; right: 15px; top: 15px; font-size: 20px; cursor: pointer; color: var(--muted); }
-    .form-group { margin-bottom: 15px; }
-    .form-group label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: bold; }
-    .input { width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid var(--border); color: #fff; border-radius: 8px; outline: none; }
-    .input:focus { border-color: var(--primary); }
-    .btn { background: var(--primary); color: #000; padding: 12px 20px; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; width: 100%; }
-    
-    /* Bottom Mobile Nav */
-    .bottom-nav { position: fixed; bottom: 0; width: 100%; background: var(--header); display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid var(--border); z-index: 100; backdrop-filter: blur(10px); }
-    .nav-item { display: flex; flex-direction: column; align-items: center; color: var(--muted); font-size: 10px; cursor: pointer; }
-    .nav-item i { font-size: 20px; margin-bottom: 4px; }
+    /* Grid Layout */
+    .section-head { padding: 15px 18px 5px; font-size: 18px; font-weight: 800; text-transform: uppercase; }
+    .section-head span { color: var(--primary); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; padding: 15px 18px; }
+    .card { cursor: pointer; transition: 0.3s; display: flex; flex-direction: column; }
+    .card:active { transform: scale(0.96); }
+    .poster-wrap { width: 100%; aspect-ratio: 2/3; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); position: relative; background: linear-gradient(135deg, #050a07 0%, #0d1a14 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    .poster-wrap img { width: 100%; height: 100%; object-fit: cover; }
+    .poster-wrap .icon-bg { font-size: 30px; color: rgba(0, 255, 102, 0.15); margin-bottom: 8px; }
+    .poster-wrap .fallback-txt { color: var(--primary); font-size: 13px; font-weight: bold; padding: 10px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+    .badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.8); color: var(--primary); font-size: 9px; font-weight: 900; padding: 3px 6px; border-radius: 4px; border: 1px solid var(--border); }
+    .card-title { margin-top: 8px; font-size: 13px; font-weight: 700; color: #fff; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+    /* Bottom App Bar */
+    .app-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: rgba(3, 7, 8, 0.95); backdrop-filter: blur(15px); border-top: 1px solid var(--border); display: flex; justify-content: space-around; align-items: center; z-index: 100; }
+    .nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-muted); font-size: 10px; font-weight: 700; cursor: pointer; }
+    .nav-item i { font-size: 18px; }
     .nav-item.active { color: var(--primary); }
 
-    /* Admin Tabs */
-    .admin-tabs { display: flex; gap: 5px; overflow-x: auto; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-    .tab-btn { background: transparent; color: var(--muted); border: none; font-weight: bold; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
-    .tab-btn.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
+    /* Detail View */
+    .detail-view { display: none; padding: 18px; max-width: 900px; margin: auto; }
+    .detail-view.active { display: block; }
+    .back-btn { background: none; border: 1px solid var(--border); color: var(--primary); padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; margin-bottom: 20px; }
+    .detail-header { display: flex; gap: 15px; margin-bottom: 20px; }
+    .detail-header img { width: 120px; aspect-ratio: 2/3; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+    .detail-info h2 { font-size: 20px; color: var(--primary); margin-bottom: 10px; }
+    .detail-info p { font-size: 12px; color: var(--text-muted); margin-bottom: 5px; line-height: 1.5; }
+    .detail-info p strong { color: #fff; }
+
+    .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; display: none; margin-bottom: 20px; }
+    .player-box iframe { width: 100%; height: 100%; border: none; }
+
+    .ep-group { margin-top: 15px; border-top: 1px solid rgba(0,255,102,0.1); padding-top: 10px; }
+    .ep-group-title { font-size: 14px; font-weight: bold; color: var(--primary); margin-bottom: 10px; }
+    .ep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+    .ep-btn { background: #0a1410; border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 8px; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; }
+    .ep-btn:hover { background: var(--primary); color: #000; }
+
+    /* Admin Modals */
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; justify-content: center; align-items: center; padding: 15px; }
+    .modal-box { background: var(--header); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; position: relative; }
+    .close-modal { position: absolute; top: 15px; right: 15px; font-size: 22px; color: var(--text-muted); cursor: pointer; }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 11px; font-weight: bold; color: var(--primary); margin-bottom: 4px; }
+    .form-control { width: 100%; padding: 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 12px; outline: none; }
+    .btn-submit { width: 100%; background: var(--primary); color: #000; padding: 12px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 5px; }
+    .tab-bar { display: flex; gap: 5px; overflow-x: auto; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+    .tab-btn { background: transparent; border: 1px solid var(--border); color: #fff; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+    .tab-btn.active { background: var(--primary); color: #000; }
+    .list-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid rgba(0,255,102,0.1); font-size: 12px; align-items: center; }
+    .del-btn { background: #d32f2f; color: #fff; border: none; padding: 5px 10px; border-radius: 4px; font-size: 10px; cursor: pointer; }
+
+    .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #00ff66; color: #000; padding: 10px 20px; border-radius: 30px; font-size: 12px; font-weight: bold; z-index: 2000; display: none; box-shadow: 0 0 15px rgba(0,255,102,0.5); }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="logo" onclick="goHome()">𝙰𝚂𝙸☠</div>
-    <div class="search-bar">
-      <i class="fa-solid fa-magnifying-glass"></i>
-      <input type="text" id="searchInp" placeholder="Search anime, drama..." oninput="doSearch()">
-    </div>
-  </header>
+  <div class="toast" id="toast"></div>
 
-  <div id="homeView">
-    <div class="section-title" id="gridTitle">🔥 Latest <span>Updates</span></div>
+  <div class="header">
+    <div class="brand" onclick="goHome()">AnimeBox</div>
+    <div class="search-box">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="text" id="searchInp" placeholder="Search anime..." oninput="applyFilters()">
+    </div>
+    <button class="admin-btn" onclick="openAdmin()"><i class="fa-solid fa-shield-halved"></i> Admin</button>
+  </div>
+
+  <div id="mainView">
+    <!-- Categories Row -->
+    <div class="chip-container" id="catChips"></div>
+    <!-- Genres Row (Dynamic based on Category) -->
+    <div class="chip-container" id="genreChips" style="display:none; padding-top: 5px; border-top:none;"></div>
+
+    <div class="section-head" id="gridTitle">🔥 Latest <span>Updates</span></div>
     <div class="grid" id="mainGrid"></div>
   </div>
 
-  <div id="detailView">
-    <button onclick="goHome()" style="background:none; color:var(--primary); border:none; font-size:14px; font-weight:bold; cursor:pointer; margin-bottom:15px;"><i class="fa fa-arrow-left"></i> Back to Catalog</button>
-    <div style="display:flex; gap:20px; flex-wrap:wrap;">
-      <div style="width:100%; max-width:300px; aspect-ratio:16/9; border-radius:10px; overflow:hidden; border:1px solid var(--border);">
-        <img id="dImg" style="width:100%; height:100%; object-fit:cover;">
-      </div>
-      <div style="flex:1; min-width:280px;">
-        <h2 id="dTitle" style="color:var(--primary); font-size:28px; margin-bottom:10px;"></h2>
-        <p style="font-size:12px; color:var(--muted); margin-bottom:15px;">
-          <span id="dCat" style="background:rgba(255,255,255,0.1); padding:3px 8px; border-radius:4px;"></span>
-          &bull; <span id="dSeason"></span> &bull; <span id="dYear"></span>
-        </p>
-        <p style="font-size:13px; font-weight:bold; margin-bottom:5px;">Genres: <span id="dGenre" style="color:var(--muted); font-weight:normal;"></span></p>
-        <p style="font-size:13px; font-weight:bold; margin-bottom:15px;">Story: <span id="dStory" style="color:var(--muted); font-weight:normal; line-height:1.5;"></span></p>
-        <button class="btn" style="width:auto; padding:8px 15px; font-size:12px;" onclick="toggleWatchlist()"><i class="fa fa-bookmark"></i> <span id="wBtnText">Watchlist</span></button>
-      </div>
-    </div>
-    
-    <div class="player-section" id="playerBox" style="display:none;"></div>
-    
-    <div id="episodesContainer"></div>
+  <div class="detail-view" id="detailView">
+    <button class="back-btn" onclick="goHome()"><i class="fa-solid fa-arrow-left"></i> Back to Grid</button>
+    <div id="detailContent"></div>
+    <div class="player-box" id="playerBox"></div>
+    <div id="episodesList"></div>
   </div>
 
-  <div class="bottom-nav">
-    <div class="nav-item active" onclick="goHome()"><i class="fa fa-home"></i>Home</div>
-    <div class="nav-item" onclick="openFilter('category')"><i class="fa fa-layer-group"></i>Categories</div>
-    <div class="nav-item" onclick="openFilter('genre')"><i class="fa fa-masks-theater"></i>Genres</div>
-    <div class="nav-item" onclick="openModal('premiumModal')"><i class="fa fa-gem"></i>Premium</div>
-    <div class="nav-item" onclick="openModal('adminLock')"><i class="fa fa-cog"></i>Admin</div>
+  <div class="app-bar">
+    <div class="nav-item active" onclick="goHome()"><i class="fa-solid fa-house"></i>Home</div>
+    <div class="nav-item" onclick="openVIPPrompt()"><i class="fa-solid fa-gem"></i>VIP Pass</div>
+    <div class="nav-item" onclick="openUnlockPrompt()"><i class="fa-solid fa-lock"></i>Decrypt</div>
+    <div class="nav-item" onclick="showWatchlist()"><i class="fa-solid fa-bookmark"></i>Watchlist</div>
+    <a id="tgLink" href="#" target="_blank" class="nav-item" style="text-decoration:none;"><i class="fa-brands fa-telegram"></i>Telegram</a>
   </div>
 
-  <!-- ADMIN LOCK MODAL -->
-  <div class="modal" id="adminLock">
+  <!-- ADMIN MODAL -->
+  <div class="modal" id="adminModal">
     <div class="modal-box">
-      <span class="close-btn" onclick="closeModal('adminLock')">&times;</span>
-      <h3 style="color:var(--primary); margin-bottom:15px;"><i class="fa fa-lock"></i> Admin Access</h3>
-      <input type="password" id="adminPin" class="input" placeholder="Admin PIN (default: admin123)">
-      <button class="btn" style="margin-top:15px;" onclick="unlockAdmin()">Unlock Panel</button>
+      <span class="close-modal" onclick="closeModal('adminModal')">&times;</span>
+      
+      <div id="adminLock">
+        <h3 style="color:var(--primary); margin-bottom:15px;">Admin Login</h3>
+        <input type="password" id="adminPin" class="form-control" placeholder="Enter Admin PIN">
+        <button class="btn-submit" onclick="verifyAdmin()">Unlock Control Panel</button>
+      </div>
+
+      <div id="adminPanel" style="display:none;">
+        <h3 style="color:var(--primary); margin-bottom:10px;">Control Center</h3>
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchAdminTab('post')">Add Post</button>
+          <button class="tab-btn" onclick="switchAdminTab('ep')">Episodes</button>
+          <button class="tab-btn" onclick="switchAdminTab('del')">Delete DB</button>
+          <button class="tab-btn" onclick="switchAdminTab('vip')">VIP Pass</button>
+          <button class="tab-btn" onclick="switchAdminTab('link')">Decrypt Links</button>
+          <button class="tab-btn" onclick="switchAdminTab('cfg')">Settings</button>
+        </div>
+
+        <div id="tab_post">
+          <div class="form-group"><label>Auto Fill Parser</label><textarea id="pParse" class="form-control" style="height:60px;" placeholder="Name: Naruto\nCategory: Hindi Sub..."></textarea></div>
+          <button class="btn-submit" style="margin-bottom:10px;" onclick="parseData()">Auto Fill</button>
+          <div class="form-group"><label>Post Name</label><input type="text" id="pName" class="form-control"></div>
+          <div class="form-group"><label>Poster URL</label><input type="text" id="pImg" class="form-control"></div>
+          <div class="form-group"><label>Category Group</label><input type="text" id="pCat" class="form-control" placeholder="Hindi Sub Anime"></div>
+          <div class="form-group"><label>Genres</label><input type="text" id="pGen" class="form-control" placeholder="Action Comedy"></div>
+          <div class="form-group"><label>Season</label><input type="text" id="pSea" class="form-control" placeholder="Season 1"></div>
+          <div class="form-group"><label>Story</label><textarea id="pStory" class="form-control"></textarea></div>
+          <button class="btn-submit" onclick="savePost()">Publish Post & Notify TG</button>
+        </div>
+
+        <div id="tab_ep" style="display:none;">
+          <div class="form-group"><label>Select Post</label><select id="epPost" class="form-control"></select></div>
+          <div class="form-group"><label>Season Label</label><input type="text" id="epSea" class="form-control" value="Season 1"></div>
+          <div class="form-group"><label>Episode Number</label><input type="text" id="epNum" class="form-control" placeholder="01"></div>
+          <div class="form-group"><label>Quality</label><select id="epQual" class="form-control"><option>HD (720p)</option><option>FHD (1080p)</option><option>SD (480p)</option></select></div>
+          <div class="form-group"><label>Stream Embed Link</label><input type="text" id="epPlay" class="form-control"></div>
+          <div class="form-group"><label>Download Link</label><input type="text" id="epDl" class="form-control"></div>
+          <button class="btn-submit" onclick="saveEp()">Attach Episode</button>
+        </div>
+
+        <div id="tab_del" style="display:none;">
+          <div id="delList" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); padding:5px; border-radius:8px;"></div>
+        </div>
+
+        <div id="tab_vip" style="display:none;">
+          <div class="form-group"><label>Email</label><input type="text" id="vEmail" class="form-control"></div>
+          <div class="form-group"><label>Passkey</label><input type="text" id="vKey" class="form-control"></div>
+          <div class="form-group"><label>Days Valid</label><input type="number" id="vDays" class="form-control" value="30"></div>
+          <button class="btn-submit" onclick="saveVip()">Generate VIP & Notify TG</button>
+          <div id="vipList" style="margin-top:15px; border-top:1px solid var(--border); padding-top:10px;"></div>
+        </div>
+
+        <div id="tab_link" style="display:none;">
+          <div class="form-group"><label>Secret Code</label><input type="text" id="lCode" class="form-control"></div>
+          <div class="form-group"><label>Hidden Target URL</label><input type="text" id="lUrl" class="form-control"></div>
+          <button class="btn-submit" onclick="saveLink()">Lock Link</button>
+        </div>
+
+        <div id="tab_cfg" style="display:none;">
+          <div class="form-group"><label>Telegram Bot Token</label><input type="password" id="cBot" class="form-control"></div>
+          <div class="form-group"><label>Telegram Chat ID</label><input type="text" id="cChat" class="form-control"></div>
+          <div class="form-group"><label>Telegram Public Link</label><input type="text" id="cTgLink" class="form-control"></div>
+          <div class="form-group"><label>Admin PIN</label><input type="text" id="cPin" class="form-control"></div>
+          <div class="form-group"><label>Shortener Domain</label><input type="text" id="cShDom" class="form-control" placeholder="domain.com"></div>
+          <div class="form-group"><label>Shortener API Key</label><input type="text" id="cShKey" class="form-control"></div>
+          <button class="btn-submit" onclick="saveSettings()">Save Global Settings</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- MAIN ADMIN PANEL (The Advance Tools) -->
-  <div class="modal" id="adminPanel">
-    <div class="modal-box" style="max-width:600px;">
-      <span class="close-btn" onclick="closeModal('adminPanel')">&times;</span>
-      <h3 style="color:var(--primary); margin-bottom:15px;"><i class="fa fa-cogs"></i> Studio Admin</h3>
-      
-      <div class="admin-tabs">
-        <button class="tab-btn active" onclick="switchTab('post')">Upload Post</button>
-        <button class="tab-btn" onclick="switchTab('eps')">Episodes</button>
-        <button class="tab-btn" onclick="switchTab('prem')">Premium</button>
-        <button class="tab-btn" onclick="switchTab('cfg')">Settings</button>
-      </div>
-
-      <!-- TAB: ADD POST -->
-      <div id="tab_post" class="tab-content active">
-        <div style="background:rgba(0,255,102,0.05); padding:10px; border-radius:8px; border:1px dashed var(--primary); margin-bottom:15px;">
-          <label style="font-size:11px; color:var(--primary); font-weight:bold;"><i class="fa fa-wand-magic-sparkles"></i> Auto-Detect Parser (Paste Text Here)</label>
-          <textarea id="autoParser" class="input" style="height:80px; resize:none; font-size:11px;" placeholder="Name: Naruto\\nGenre: Action\\nCategory: Anime..." oninput="runParser()"></textarea>
-        </div>
-        
-        <div class="form-group">
-          <label>Poster Image (Select to upload to Telegram CDN)</label>
-          <input type="file" id="upFile" class="input" style="padding:8px;" accept="image/*" onchange="uploadToTG()">
-          <input type="text" id="upImgUrl" class="input" placeholder="OR Paste Image URL directly" style="margin-top:8px;">
-          <span id="tgMsgId" style="display:none;"></span>
-        </div>
-
-        <div class="form-group"><label>Name / Title</label><input type="text" id="upName" class="input"></div>
-        <div style="display:flex; gap:10px;">
-          <div class="form-group" style="flex:1;"><label>Category</label><input type="text" id="upCat" class="input" placeholder="e.g. Hindi Subbed"></div>
-          <div class="form-group" style="flex:1;"><label>Season / Type</label><input type="text" id="upSeason" class="input" placeholder="Season 01"></div>
-        </div>
-        <div style="display:flex; gap:10px;">
-          <div class="form-group" style="flex:1;"><label>Genres</label><input type="text" id="upGenre" class="input" placeholder="Action Comedy"></div>
-          <div class="form-group" style="flex:1;"><label>Release Year</label><input type="text" id="upYear" class="input" placeholder="2025"></div>
-        </div>
-        <div class="form-group"><label>Short Story</label><textarea id="upStory" class="input" style="height:60px;"></textarea></div>
-        <button class="btn" onclick="publishPost()">Publish Post</button>
-
-        <h4 style="margin-top:20px; margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">Manage Posts</h4>
-        <div id="adminPostList" style="max-height:150px; overflow-y:auto;"></div>
-      </div>
-
-      <!-- TAB: EPISODES -->
-      <div id="tab_eps" class="tab-content">
-        <div class="form-group"><label>Select Target Post</label><select id="epPostSel" class="input"></select></div>
-        <div class="form-group"><label>Season Group</label><input type="text" id="epSeason" class="input" value="Season 01"></div>
-        <div class="form-group"><label>Episode Label</label><input type="text" id="epLabel" class="input" placeholder="e.g. 01, Full Pack"></div>
-        <div class="form-group">
-          <label>Quality Resolution</label>
-          <select id="epQual" class="input"><option>FHD (1080p)</option><option selected>HD (720p)</option><option>SD (480p)</option></select>
-        </div>
-        <div class="form-group"><label>Direct/Shortener Download Link</label><input type="text" id="epDl" class="input" placeholder="https://drive..."></div>
-        <div class="form-group"><label>Embed Play Link (Optional)</label><input type="text" id="epPlay" class="input" placeholder="https://streamwish..."></div>
-        <button class="btn" onclick="publishEpisode()">Add Episode</button>
-      </div>
-
-      <!-- TAB: PREMIUM & LOCKS -->
-      <div id="tab_prem" class="tab-content">
-        <h4 style="color:var(--primary); margin-bottom:10px;">Create VIP User</h4>
-        <div class="form-group"><input type="email" id="vpEmail" class="input" placeholder="User Gmail"></div>
-        <div class="form-group"><input type="text" id="vpPass" class="input" placeholder="Set Password"></div>
-        <div class="form-group"><input type="number" id="vpDays" class="input" placeholder="Validity Days (e.g. 30)"></div>
-        <button class="btn" style="margin-bottom:20px;" onclick="addPremiumUser()">Activate VIP</button>
-
-        <h4 style="color:var(--primary); margin-bottom:10px;">Create Locked Link Key</h4>
-        <div class="form-group"><input type="text" id="lkCode" class="input" placeholder="Custom Secret Code (e.g. NARUTO99)"></div>
-        <div class="form-group"><input type="text" id="lkUrl" class="input" placeholder="Original Target URL"></div>
-        <button class="btn" onclick="addPaidRequest()">Create Locked Link</button>
-      </div>
-
-      <!-- TAB: SETTINGS -->
-      <div id="tab_cfg" class="tab-content">
-        <div class="form-group"><label>Telegram Bot Token</label><input type="text" id="cfgBot" class="input" placeholder="For Auto Uploads"></div>
-        <div class="form-group"><label>Telegram Chat ID</label><input type="text" id="cfgChat" class="input" placeholder="-100xxxxxx"></div>
-        <div class="form-group"><label>Admin PIN Password</label><input type="text" id="cfgPin" class="input" placeholder="admin123"></div>
-        <div class="form-group"><label>Global Player Password</label><input type="text" id="cfgPlayPass" class="input" placeholder="stream123"></div>
-        
-        <h4 style="margin:20px 0 10px; border-bottom:1px solid #333; padding-bottom:5px;">Link Shortener Rotation</h4>
-        <div style="display:flex; gap:10px; margin-bottom:10px;">
-          <input type="text" id="cfgShDom" class="input" placeholder="Domain (adrinolinks.in)">
-          <input type="text" id="cfgShApi" class="input" placeholder="API Key">
-        </div>
-        <button class="btn" onclick="saveGlobalSettings()">Save All Settings</button>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- PREMIUM / USER MODAL -->
-  <div class="modal" id="premiumModal">
-    <div class="modal-box">
-      <span class="close-btn" onclick="closeModal('premiumModal')">&times;</span>
-      <h3 style="color:var(--primary); margin-bottom:15px;"><i class="fa fa-gem"></i> VIP Access</h3>
-      <input type="email" id="uMail" class="input" style="margin-bottom:10px;" placeholder="Registered Gmail">
-      <input type="password" id="uPass" class="input" style="margin-bottom:15px;" placeholder="VIP Password">
-      <button class="btn" onclick="loginPremium()">Login VIP</button>
-      
-      <hr style="border:0; border-bottom:1px solid #333; margin:20px 0;">
-      
-      <h3 style="color:var(--primary); margin-bottom:10px;"><i class="fa fa-lock"></i> Unlock Paid Request</h3>
-      <input type="text" id="uCode" class="input" style="margin-bottom:15px;" placeholder="Enter Secret Code">
-      <button class="btn" onclick="unlockLink()">Decrypt Link</button>
-    </div>
-  </div>
-
-  <!-- FILTER MODAL -->
-  <div class="modal" id="filterModal">
-    <div class="modal-box">
-      <span class="close-btn" onclick="closeModal('filterModal')">&times;</span>
-      <h3 id="fTitle" style="color:var(--primary); margin-bottom:15px;"></h3>
-      <div id="fList" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
-    </div>
+  <!-- ACTION MODAL -->
+  <div class="modal" id="actionModal">
+    <div class="modal-box" id="actionContent" style="text-align:center;"></div>
   </div>
 
   <script>
-    let appData = { posts: [], settings: {}, shorteners: [] };
-    let currentPost = null;
-    let watchlist = JSON.parse(localStorage.getItem('ab_watchlist') || '[]');
+    let appData = { posts: [], settings: {}, shorteners: [], paid_requests: [] };
+    let selCat = 'ALL', selGen = 'ALL', viewMode = 'home';
+    let watchlist = JSON.parse(localStorage.getItem('watchlist')) || [];
 
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+    // Init PWA SW
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+    }
 
     window.onload = async () => {
-      const res = await fetch('/api/data');
-      appData = await res.json();
-      renderGrid(appData.posts);
+      await loadData();
     };
 
-    function renderGrid(posts) {
-      const g = document.getElementById('mainGrid');
-      if (posts.length === 0) return g.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:#666;">No posts found.</p>';
-      
-      g.innerHTML = posts.map(p => {
-        const isNew = (Date.now() - p.updatedAt) < (3 * 24 * 60 * 60 * 1000);
-        return \`
-          <div class="card" onclick="openDetail('\${p.id}')">
-            <div class="card-img-wrap">
-              \${isNew ? '<span class="badge-new">NEW</span>' : ''}
-              <span class="badge-cat">\${p.category}</span>
-              \${p.image_url ? \`<img src="\${p.image_url}" loading="lazy">\` : \`<div style="width:100%;height:100%;background:#111;display:flex;align-items:center;justify-content:center;"><i class="fa fa-image" style="font-size:30px;color:#333;"></i></div>\`}
-            </div>
-            <div class="card-title">\${p.name}</div>
-          </div>
-        \`;
-      }).join('');
+    async function loadData() {
+      try {
+        const res = await fetch('/api/data');
+        appData = await res.json();
+        document.getElementById('tgLink').href = appData.settings?.channel_link || '#';
+        renderCatChips();
+        applyFilters();
+      } catch (e) { showToast("Offline Mode Active"); }
     }
 
-    function doSearch() {
-      const q = document.getElementById('searchInp').value.toLowerCase();
-      renderGrid(appData.posts.filter(p => p.name.toLowerCase().includes(q) || (p.genres||'').toLowerCase().includes(q)));
-      document.getElementById('gridTitle').innerHTML = q ? 'Search <span>Results</span>' : '🔥 Latest <span>Updates</span>';
+    // ==========================================
+    // DYNAMIC CATEGORY -> GENRE CHAIN LOGIC
+    // ==========================================
+    function renderCatChips() {
+      const cats = [...new Set(appData.posts.map(p => p.category).filter(Boolean))];
+      let html = \`<div class="chip \${selCat==='ALL'?'active':''}" onclick="setCat('ALL')">All Categories</div>\`;
+      cats.forEach(c => { html += \`<div class="chip \${selCat===c?'active':''}" onclick="setCat('\${c}')">\${c}</div>\`; });
+      document.getElementById('catChips').innerHTML = html;
+      renderGenChips();
     }
 
-    async function openDetail(id) {
-      currentPost = appData.posts.find(p => p.id === id);
-      document.getElementById('homeView').style.display = 'none';
-      document.getElementById('detailView').style.display = 'block';
-      window.scrollTo(0,0);
+    function setCat(c) {
+      selCat = c; selGen = 'ALL'; viewMode = 'home';
+      renderCatChips();
+      applyFilters();
+    }
 
-      document.getElementById('dImg').src = currentPost.image_url || '';
-      document.getElementById('dTitle').innerText = currentPost.name;
-      document.getElementById('dCat').innerText = currentPost.category;
-      document.getElementById('dSeason').innerText = currentPost.season || 'Movie';
-      document.getElementById('dYear').innerText = currentPost.release_date || 'N/A';
-      document.getElementById('dGenre').innerText = currentPost.genres || 'N/A';
-      document.getElementById('dStory').innerText = currentPost.short_story || 'No summary available.';
+    function renderGenChips() {
+      const gb = document.getElementById('genreChips');
+      if (selCat === 'ALL') { gb.style.display = 'none'; return; }
       
-      updateWBtn();
+      const inCat = appData.posts.filter(p => p.category === selCat);
+      const gSet = new Set();
+      inCat.forEach(p => { if (p.genres) p.genres.split(/[\\s,;]+/).forEach(g => gSet.add(g.trim())); });
+      const gens = Array.from(gSet).filter(Boolean);
 
-      // Load Episodes
-      document.getElementById('episodesContainer').innerHTML = '<p>Loading episodes...</p>';
-      const res = await fetch(\`/api/episodes?post_id=\${id}\`);
-      const data = await res.json();
-      
-      if(data.episodes.length === 0) {
-        document.getElementById('episodesContainer').innerHTML = '<p style="color:#666;">No episodes uploaded yet.</p>';
+      if (gens.length === 0) { gb.style.display = 'none'; return; }
+
+      gb.style.display = 'flex';
+      let html = \`<div class="chip \${selGen==='ALL'?'active':''}" onclick="setGen('ALL')">All Genres</div>\`;
+      gens.forEach(g => { html += \`<div class="chip \${selGen===g?'active':''}" onclick="setGen('\${g}')">\${g}</div>\`; });
+      gb.innerHTML = html;
+    }
+
+    function setGen(g) {
+      selGen = g;
+      renderGenChips();
+      applyFilters();
+    }
+
+    function applyFilters() {
+      if (viewMode === 'watchlist') {
+        renderGrid(appData.posts.filter(p => watchlist.includes(p.id)));
         return;
       }
-
-      // Grouping logic (Advanced UI)
-      const group = {};
-      data.episodes.forEach(e => {
-        const s = e.season || 'Season 01';
-        if(!group[s]) group[s] = { "FHD (1080p)": [], "HD (720p)": [], "SD (480p)": [] };
-        const q = e.quality || "HD (720p)";
-        if(group[s][q]) group[s][q].push(e); else group[s][q] = [e];
-      });
-
-      let html = '';
-      Object.keys(group).sort().forEach(s => {
-        html += \`<div class="ep-group"><h3 style="color:var(--primary);margin-bottom:10px;"><i class="fa fa-film"></i> \${s}</h3>\`;
-        ["FHD (1080p)", "HD (720p)", "SD (480p)"].forEach(q => {
-          if(group[s][q] && group[s][q].length > 0) {
-            html += \`<div style="font-size:11px; color:#aaa; margin-top:10px;">\${q}</div><div class="ep-grid">\`;
-            group[s][q].sort((a,b)=> parseInt(a.label||0)-parseInt(b.label||0)).forEach(ep => {
-              html += \`<button class="ep-btn" onclick="handleEpClick('\${ep.id}', '\${ep.play_link}', '\${ep.download_link}')">Ep \${ep.label}</button>\`;
-            });
-            html += \`</div>\`;
-          }
-        });
-        html += \`</div>\`;
-      });
-      document.getElementById('episodesContainer').innerHTML = html;
+      
+      let res = appData.posts;
+      if (selCat !== 'ALL') res = res.filter(p => p.category === selCat);
+      if (selGen !== 'ALL') res = res.filter(p => p.genres && p.genres.includes(selGen));
+      
+      const q = document.getElementById('searchInp').value.toLowerCase().trim();
+      if (q) res = res.filter(p => p.name.toLowerCase().includes(q) || p.genres?.toLowerCase().includes(q));
+      
+      renderGrid(res);
     }
 
-    function handleEpClick(epId, play, dl) {
-      const ask = confirm("Click OK to Watch Online, or Cancel to Download.");
-      if (ask) {
-        if(play) {
-          const pass = prompt("Enter Global Player Password (if required):");
-          const expected = appData.settings.player_password || "stream123";
-          if (pass === expected) {
-            const pb = document.getElementById('playerBox');
-            pb.style.display = 'block';
-            pb.innerHTML = \`<iframe src="\${play}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>\`;
-            pb.scrollIntoView({behavior:'smooth'});
-          } else alert("Invalid Player Password!");
-        } else alert("No streaming link available.");
-      } else {
-        if(dl) startDownload(epId); else alert("No download link available.");
-      }
-    }
-
-    async function startDownload(epId) {
-      const token = localStorage.getItem('ab_vip_token') || '';
-      const res = await fetch(\`/api/get-link?post_id=\${currentPost.id}&ep_id=\${epId}&token=\${token}\`);
-      const data = await res.json();
-      if(data.url) window.open(data.url, '_blank'); else alert("Link Error");
-    }
-
-    function toggleWatchlist() {
-      if(watchlist.includes(currentPost.id)) watchlist = watchlist.filter(id => id !== currentPost.id);
-      else watchlist.push(currentPost.id);
-      localStorage.setItem('ab_watchlist', JSON.stringify(watchlist));
-      updateWBtn();
-    }
-    function updateWBtn() {
-      document.getElementById('wBtnText').innerText = watchlist.includes(currentPost.id) ? 'In Watchlist' : 'Add Watchlist';
+    function renderGrid(posts) {
+      const grid = document.getElementById('mainGrid');
+      if (!posts.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#777;padding:30px;">No results found.</div>'; return; }
+      
+      grid.innerHTML = posts.map(p => \`
+        <div class="card" onclick="openDetail('\${p.id}')">
+          <div class="poster-wrap">
+            <span class="badge">\${p.category}</span>
+            \${p.image_url ? \`<img src="\${p.image_url}" loading="lazy">\` : \`<i class="fa-solid fa-film icon-bg"></i><div class="fallback-txt">\${p.name}</div>\`}
+          </div>
+          <div class="card-title">\${p.name}</div>
+        </div>
+      \`).join('');
     }
 
     function goHome() {
-      document.getElementById('detailView').style.display = 'none';
-      document.getElementById('homeView').style.display = 'block';
-      document.getElementById('playerBox').innerHTML = ''; 
-      document.getElementById('playerBox').style.display = 'none'; 
+      viewMode = 'home';
+      document.getElementById('mainView').style.display = 'block';
+      document.getElementById('detailView').classList.remove('active');
+      document.getElementById('playerBox').style.display = 'none';
+      document.getElementById('playerBox').innerHTML = '';
+      document.getElementById('gridTitle').innerHTML = '🔥 Latest <span>Updates</span>';
+      document.getElementById('catChips').style.display = 'flex';
+      applyFilters();
     }
 
-    // --- FILTERS ---
-    function openFilter(type) {
-      const modal = document.getElementById('filterModal');
-      const title = document.getElementById('fTitle');
-      const list = document.getElementById('fList');
-      modal.style.display = 'flex';
-
-      if (type === 'category') {
-        title.innerText = "Categories";
-        const cats = [...new Set(appData.posts.map(p => p.category).filter(Boolean))];
-        list.innerHTML = cats.map(c => \`<button class="btn" style="width:auto;padding:8px 15px;" onclick="applyFilter('category','\${c}')">\${c}</button>\`).join('');
-      } else if (type === 'genre') {
-        title.innerText = "Genres";
-        const gs = new Set();
-        appData.posts.forEach(p => (p.genres||'').split(/[ ,]+/).forEach(g => { if(g) gs.add(g.trim()) }));
-        list.innerHTML = Array.from(gs).map(g => \`<button class="btn" style="width:auto;padding:8px 15px;" onclick="applyFilter('genre','\${g}')">\${g}</button>\`).join('');
-      }
-    }
-    function applyFilter(type, val) {
-      closeModal('filterModal');
-      goHome();
-      if(type==='category') renderGrid(appData.posts.filter(p => p.category === val));
-      if(type==='genre') renderGrid(appData.posts.filter(p => (p.genres||'').includes(val)));
-      document.getElementById('gridTitle').innerHTML = \`\${val} <span>Anime</span>\`;
+    function showWatchlist() {
+      viewMode = 'watchlist';
+      document.getElementById('mainView').style.display = 'block';
+      document.getElementById('detailView').classList.remove('active');
+      document.getElementById('catChips').style.display = 'none';
+      document.getElementById('genreChips').style.display = 'none';
+      document.getElementById('gridTitle').innerHTML = '🔖 My <span>Watchlist</span>';
+      applyFilters();
     }
 
-    // --- ADMIN SYSTEM ---
-    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
-    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-    function switchTab(t) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('tab_'+t).classList.add('active');
-    }
+    // ==========================================
+    // DETAIL & EPISODES
+    // ==========================================
+    let currentPost = null;
+    async function openDetail(id) {
+      currentPost = appData.posts.find(p => p.id === id);
+      if (!currentPost) return;
 
-    let adminData = null;
-    async function unlockAdmin() {
-      const pin = document.getElementById('adminPin').value;
-      const res = await fetch('/api/admin-data', { method:'POST', body:JSON.stringify({pin}) });
-      if(res.ok) {
-        adminData = await res.json();
-        closeModal('adminLock'); openModal('adminPanel');
-        fillAdminData();
-      } else alert("Invalid Admin PIN");
-    }
+      document.getElementById('mainView').style.display = 'none';
+      document.getElementById('detailView').classList.add('active');
 
-    function fillAdminData() {
-      // Setup Post Dropdown for Episodes
-      document.getElementById('epPostSel').innerHTML = adminData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
-      // Populate Posts List
-      document.getElementById('adminPostList').innerHTML = adminData.posts.map(p => \`
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid #333;">
-          <span style="font-size:12px;">\${p.name}</span>
-          <button onclick="delPost('\${p.id}')" style="background:#e33; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-weight:bold; cursor:pointer;">Delete</button>
+      const inFav = watchlist.includes(id);
+
+      document.getElementById('detailContent').innerHTML = \`
+        <div class="detail-header">
+          \${currentPost.image_url ? \`<img src="\${currentPost.image_url}">\` : ''}
+          <div class="detail-info">
+            <h2>\${currentPost.name}</h2>
+            <p><strong>Category:</strong> \${currentPost.category}</p>
+            <p><strong>Genre:</strong> \${currentPost.genres || 'N/A'}</p>
+            <p><strong>Season:</strong> \${currentPost.season || ''}</p>
+            <button onclick="toggleWatchlist('\${id}')" style="background:\${inFav?'var(--primary)':'#111'}; color:\${inFav?'#000':'#fff'}; border:1px solid var(--border); padding:6px 12px; border-radius:6px; margin-top:10px; cursor:pointer; font-weight:bold;">
+              <i class="fa-solid fa-bookmark"></i> \${inFav?'In Watchlist':'Add to Watchlist'}
+            </button>
+          </div>
         </div>
-      \`).join('');
-      // Fill Settings
-      document.getElementById('cfgBot').value = adminData.settings.bot_token || '';
-      document.getElementById('cfgChat').value = adminData.settings.chat_id || '';
-      document.getElementById('cfgPin').value = adminData.settings.admin_password || '';
-      document.getElementById('cfgPlayPass').value = adminData.settings.player_password || '';
-      if(adminData.shorteners.length > 0) {
-        document.getElementById('cfgShDom').value = adminData.shorteners[0].domain || '';
-        document.getElementById('cfgShApi').value = adminData.shorteners[0].api_key || '';
+        <div style="color:var(--text-muted); font-size:12px; line-height:1.5; margin-bottom:20px; border-top:1px solid var(--border); padding-top:10px;">
+          \${currentPost.story || 'No summary available.'}
+        </div>
+      \`;
+
+      const epRes = await fetch(\`/api/episodes?post_id=\${id}\`);
+      const epData = await epRes.json();
+      renderEpisodes(epData.episodes || []);
+    }
+
+    function toggleWatchlist(id) {
+      if (watchlist.includes(id)) watchlist = watchlist.filter(x => x !== id);
+      else watchlist.push(id);
+      localStorage.setItem('watchlist', JSON.stringify(watchlist));
+      openDetail(id);
+    }
+
+    function renderEpisodes(eps) {
+      const list = document.getElementById('episodesList');
+      if (!eps.length) { list.innerHTML = '<p style="color:#777;">No episodes uploaded yet.</p>'; return; }
+
+      // Group by Season -> Quality
+      const grouped = {};
+      eps.forEach(e => {
+        const s = e.season || "Season 1";
+        if (!grouped[s]) grouped[s] = {};
+        const q = e.quality || "HD (720p)";
+        if (!grouped[s][q]) grouped[s][q] = [];
+        grouped[s][q].push(e);
+      });
+
+      let html = '';
+      Object.keys(grouped).sort().forEach(sea => {
+        html += \`<div class="ep-group"><div class="ep-group-title">\${sea}</div>\`;
+        Object.keys(grouped[sea]).sort().forEach(qual => {
+          html += \`<div style="font-size:11px; color:#aaa; margin:8px 0 5px;">\${qual}</div><div class="ep-grid">\`;
+          const epArray = grouped[sea][qual].sort((a,b) => parseInt(a.label) - parseInt(b.label));
+          epArray.forEach(e => {
+            html += \`<button class="ep-btn" onclick="openAction('\${e.id}', \${!!e.play_link}, \${!!e.download_link})">Ep \${e.label}</button>\`;
+          });
+          html += \`</div>\`;
+        });
+        html += \`</div>\`;
+      });
+      list.innerHTML = html;
+    }
+
+    function openAction(epId, hasPlay, hasDl) {
+      const m = document.getElementById('actionModal');
+      document.getElementById('actionContent').innerHTML = \`
+        <span class="close-modal" onclick="closeModal('actionModal')">&times;</span>
+        <h3 style="color:var(--primary); margin-bottom:15px;">Choose Action</h3>
+        \${hasPlay ? \`<button class="btn-submit" style="background:#0088cc; color:#fff;" onclick="playVid('\${epId}')"><i class="fa-solid fa-play"></i> Stream Video</button>\` : ''}
+        \${hasDl ? \`<button class="btn-submit" onclick="dlVid('\${epId}')"><i class="fa-solid fa-download"></i> Standard Download</button>
+                    <button class="btn-submit" style="background:#00b359;" onclick="dlVid('\${epId}', true)"><i class="fa-solid fa-gem"></i> VIP Direct Download</button>\` : ''}
+      \`;
+      m.style.display = 'flex';
+    }
+
+    async function playVid(epId) {
+      closeModal('actionModal');
+      const box = document.getElementById('playerBox');
+      const epRes = await fetch(\`/api/episodes?post_id=\${currentPost.id}\`);
+      const eps = await epRes.json();
+      const ep = eps.episodes.find(e => e.id === epId);
+      if (ep?.play_link) {
+        box.style.display = 'block';
+        // RELAXED SANDBOX FOR ALL EMBEDS
+        box.innerHTML = \`<iframe src="\${ep.play_link}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-popups-to-escape-sandbox"></iframe>\`;
+        box.scrollIntoView({behavior: 'smooth'});
       }
     }
 
-    // Bulletproof Parser (from original)
-    function runParser() {
-      const txt = document.getElementById('autoParser').value;
-      const lines = txt.split('\\n');
-      let cur = null, d = {name:'', cat:'', year:'', gen:'', st:''};
-      lines.forEach(l => {
-        const m = l.match(/^\\s*(name|title|category|cat|date|release|year|genre|genres|story|synopsis)\\s*:\\s*(.*)/i);
-        if(m) {
-          const k = m[1].toLowerCase(); const v = m[2].trim();
-          if(['name','title'].includes(k)) cur='name';
-          else if(['category','cat'].includes(k)) cur='cat';
-          else if(['date','release','year'].includes(k)) cur='year';
-          else if(['genre','genres'].includes(k)) cur='gen';
-          else if(['story','synopsis'].includes(k)) cur='st';
-          if(cur) d[cur] = v;
-        } else if (cur) d[cur] += "\\n" + l.trim();
+    async function dlVid(epId, isVip = false) {
+      let key = '';
+      if (isVip) {
+        key = prompt("Enter VIP Passcode:");
+        if (!key) return;
+      }
+      showToast("Generating link... Please wait.");
+      const res = await fetch(\`/api/get-link?post_id=\${currentPost.id}&ep_id=\${epId}&key=\${encodeURIComponent(key)}\`);
+      const data = await res.json();
+      if (data.url) {
+        const form = document.createElement("form");
+        form.method = "GET"; form.action = data.url; form.target = "_blank"; form.rel = "noreferrer noopener";
+        document.body.appendChild(form); form.submit(); document.body.removeChild(form);
+        closeModal('actionModal');
+      } else {
+        alert(data.error || "Link failed.");
+      }
+    }
+
+    // ==========================================
+    // ADMIN FUNCTIONS
+    // ==========================================
+    function openAdmin() { document.getElementById('adminModal').style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+    function showToast(m) { const t=document.getElementById('toast'); t.innerText=m; t.style.display='block'; setTimeout(()=>t.style.display='none',3000); }
+
+    function verifyAdmin() {
+      const pin = document.getElementById('adminPin').value;
+      if (pin === (appData.settings.admin_pin || 'admin123')) {
+        document.getElementById('adminLock').style.display = 'none';
+        document.getElementById('adminPanel').style.display = 'block';
+        refreshAdminData();
+      } else { alert("Wrong PIN"); }
+    }
+
+    function switchAdminTab(t) {
+      ['post','ep','del','vip','link','cfg'].forEach(x => {
+        document.getElementById('tab_'+x).style.display = (x===t)?'block':'none';
       });
-      if(d.name) document.getElementById('upName').value = d.name.trim();
-      if(d.cat) document.getElementById('upCat').value = d.cat.trim();
-      if(d.year) document.getElementById('upYear').value = d.year.trim();
-      if(d.gen) document.getElementById('upGenre').value = d.gen.trim();
-      if(d.st) document.getElementById('upStory').value = d.st.trim();
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      event.target.classList.add('active');
+      if(t==='del') renderDelList();
     }
 
-    async function uploadToTG() {
-      const file = document.getElementById('upFile').files[0];
-      if(!file) return;
-      document.getElementById('upImgUrl').value = "Uploading to Telegram CDN...";
-      const fd = new FormData(); fd.append("file", file);
-      const res = await fetch('/api/upload-telegram', {method:'POST', body:fd});
-      const data = await res.json();
-      if(data.url) {
-        document.getElementById('upImgUrl').value = data.url;
-        document.getElementById('tgMsgId').innerText = data.tg_message_id;
-      } else alert(data.error);
+    function parseData() {
+      const text = document.getElementById('pParse').value;
+      const lines = text.split('\\n');
+      let p={n:"", c:"", g:"", s:"", st:""}, key=null;
+      lines.forEach(l => {
+        const m = l.match(/^\\s*(name|category|genre|season|story)\\s*:\\s*(.*)/i);
+        if(m) { key = m[1].toLowerCase().substring(0,1); p[key] = m[2].trim(); }
+        else if(key==="s" && l.trim()) p["st"] += " " + l.trim();
+      });
+      if(p.n) document.getElementById('pName').value=p.n;
+      if(p.c) document.getElementById('pCat').value=p.c;
+      if(p.g) document.getElementById('pGen').value=p.g;
+      if(p.s) document.getElementById('pSea').value=p.s;
     }
 
-    async function publishPost() {
-      await fetch('/api/posts', { method:'POST', body:JSON.stringify({
-        name: document.getElementById('upName').value,
-        image_url: document.getElementById('upImgUrl').value,
-        category: document.getElementById('upCat').value,
-        season: document.getElementById('upSeason').value,
-        genres: document.getElementById('upGenre').value,
-        release_date: document.getElementById('upYear').value,
-        short_story: document.getElementById('upStory').value,
-        tg_message_id: document.getElementById('tgMsgId').innerText || null
-      })});
-      alert("Post Published!"); location.reload();
-    }
-
-    async function delPost(id) {
-      if(!confirm("Delete fully? (Will delete from TG as well)")) return;
-      await fetch(\`/api/posts/\${id}\`, {method:'DELETE'});
-      alert("Deleted!"); location.reload();
-    }
-
-    async function publishEpisode() {
-      await fetch('/api/episodes', {method:'POST', body:JSON.stringify({
-        post_id: document.getElementById('epPostSel').value,
-        season: document.getElementById('epSeason').value,
-        label: document.getElementById('epLabel').value,
-        quality: document.getElementById('epQual').value,
-        download_link: document.getElementById('epDl').value,
-        play_link: document.getElementById('epPlay').value
-      })});
-      alert("Episode Added!");
-    }
-
-    // --- Premium & Paid Requests ---
-    async function loginPremium() {
-      const res = await fetch('/api/premium-auth', { method:'POST', body:JSON.stringify({
-        email: document.getElementById('uMail').value,
-        password: document.getElementById('uPass').value
-      })});
-      const data = await res.json();
-      if(data.success) {
-        localStorage.setItem('ab_vip_token', data.token);
-        alert("VIP Activated! You bypass shorteners now."); closeModal('premiumModal');
-      } else alert(data.error);
-    }
-
-    async function unlockLink() {
-      const code = document.getElementById('uCode').value;
-      const res = await fetch(\`/api/decrypt?code=\${code}\`);
-      const data = await res.json();
-      if(data.url) { window.open(data.url, '_blank'); closeModal('premiumModal'); }
-      else alert("Invalid Code");
-    }
-
-    async function addPremiumUser() {
-      const email = document.getElementById('vpEmail').value;
-      const pass = document.getElementById('vpPass').value;
-      const days = document.getElementById('vpDays').value;
-      const adminBody = adminData; 
-      const expiry = new Date(); expiry.setDate(expiry.getDate() + parseInt(days||30));
-      const token = "tok_"+Date.now()+Math.random().toString(36).substring(2);
-      adminBody.premium.push({ gmail:email, password:pass, token, expires_at: expiry.toISOString() });
-      await fetch('/api/settings', {method:'POST', body:JSON.stringify({premium_users: adminBody.premium})});
-      alert("VIP User Created!");
-    }
-
-    async function addPaidRequest() {
-      const pwd = document.getElementById('lkCode').value;
-      const url = document.getElementById('lkUrl').value;
-      adminData.paid_requests.push({password: pwd, original_link: url});
-      await fetch('/api/settings', {method:'POST', body:JSON.stringify({paid_requests: adminData.paid_requests})});
-      alert("Locked Link Created!");
-    }
-
-    async function saveGlobalSettings() {
-      const set = {
-        bot_token: document.getElementById('cfgBot').value,
-        chat_id: document.getElementById('cfgChat').value,
-        admin_password: document.getElementById('cfgPin').value,
-        player_password: document.getElementById('cfgPlayPass').value
+    async function savePost() {
+      const body = {
+        name: document.getElementById('pName').value,
+        image_url: document.getElementById('pImg').value,
+        category: document.getElementById('pCat').value,
+        genres: document.getElementById('pGen').value,
+        season: document.getElementById('pSea').value,
+        story: document.getElementById('pStory').value
       };
-      const sh = [{ domain: document.getElementById('cfgShDom').value, api_key: document.getElementById('cfgShApi').value }];
-      await fetch('/api/settings', {method:'POST', body:JSON.stringify({settings: set, shorteners: sh})});
-      alert("Settings Saved!"); location.reload();
+      if(!body.name) return alert("Name required");
+      await fetch('/api/posts', { method: 'POST', body: JSON.stringify(body) });
+      showToast("Post Saved & Notified");
+      await loadData(); refreshAdminData();
+      document.getElementById('pName').value='';
+    }
+
+    function refreshAdminData() {
+      const sel = document.getElementById('epPost');
+      sel.innerHTML = appData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
+      
+      document.getElementById('cBot').value = appData.settings.bot_token || '';
+      document.getElementById('cChat').value = appData.settings.chat_id || '';
+      document.getElementById('cTgLink').value = appData.settings.channel_link || '';
+      document.getElementById('cPin').value = appData.settings.admin_pin || '';
+      if(appData.shorteners.length){
+        document.getElementById('cShDom').value = appData.shorteners[0].domain;
+        document.getElementById('cShKey').value = appData.shorteners[0].api_key;
+      }
+    }
+
+    async function saveEp() {
+      const body = {
+        post_id: document.getElementById('epPost').value,
+        season: document.getElementById('epSea').value,
+        label: document.getElementById('epNum').value,
+        quality: document.getElementById('epQual').value,
+        play_link: document.getElementById('epPlay').value,
+        download_link: document.getElementById('epDl').value
+      };
+      await fetch('/api/episodes', { method: 'POST', body: JSON.stringify(body) });
+      showToast("Episode Linked");
+    }
+
+    function renderDelList() {
+      const list = document.getElementById('delList');
+      list.innerHTML = appData.posts.map(p => \`
+        <div class="list-item"><span>\${p.name}</span><button class="del-btn" onclick="delPost('\${p.id}')">Delete</button></div>
+      \`).join('');
+    }
+    async function delPost(id) {
+      if(!confirm("Erase post and all episodes?")) return;
+      await fetch('/api/posts/'+id, { method: 'DELETE' });
+      await loadData(); renderDelList(); showToast("Deleted");
+    }
+
+    async function saveVip() {
+      const body = {
+        email: document.getElementById('vEmail').value,
+        key: document.getElementById('vKey').value,
+        days: document.getElementById('vDays').value
+      };
+      await fetch('/api/premium', { method: 'POST', body: JSON.stringify(body) });
+      showToast("VIP Created & Notified");
+    }
+
+    async function saveLink() {
+      appData.paid_requests.push({
+        password: document.getElementById('lCode').value,
+        original_link: document.getElementById('lUrl').value
+      });
+      await fetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests: appData.paid_requests }) });
+      showToast("Locked Link Saved");
+    }
+
+    async function saveSettings() {
+      const body = {
+        settings: {
+          bot_token: document.getElementById('cBot').value,
+          chat_id: document.getElementById('cChat').value,
+          channel_link: document.getElementById('cTgLink').value,
+          admin_pin: document.getElementById('cPin').value
+        },
+        shorteners: [{ domain: document.getElementById('cShDom').value, api_key: document.getElementById('cShKey').value }]
+      };
+      await fetch('/api/settings', { method: 'POST', body: JSON.stringify(body) });
+      showToast("Config Saved"); await loadData();
+    }
+
+    // Modal Prompts
+    function openVIPPrompt() {
+      const k = prompt("Enter VIP Passcode to test:");
+      if(k) showToast("Try downloading a video with VIP direct option.");
+    }
+
+    async function openUnlockPrompt() {
+      const c = prompt("Enter Secret Decrypt Code:");
+      if(c) {
+        const res = await fetch(\`/api/decrypt-link?code=\${encodeURIComponent(c)}\`);
+        const d = await res.json();
+        if(d.url) {
+          const form = document.createElement("form");
+          form.method = "GET"; form.action = d.url; form.target = "_blank"; form.rel = "noreferrer noopener";
+          document.body.appendChild(form); form.submit(); document.body.removeChild(form);
+        } else alert("Invalid code.");
+      }
     }
   </script>
 </body>
 </html>`;
-        }
+}
