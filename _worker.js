@@ -87,12 +87,6 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        "scope_extensions": [
-          { "origin": "https://auth.khanaasif57828.workers.dev" },
-          { "origin": "https://t.me" },
-          { "origin": "https://telegram.org" }
-        ],
-        
         related_applications: [
           {
             platform: "webapp",
@@ -1189,4 +1183,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-}
+        }
