@@ -2,7 +2,7 @@
  * AnimeBox / Asi Anime - Cloudflare Worker Core Engine
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Full PWA Suite (Manifest, Service Worker, App Icons & Offline Mode)
- * PWA BUILDER 100% SCORE EDITION (Strict W3C/Microsoft Fix)
+ * PWA BUILDER 100% SCORE EDITION - FINAL FIXED
  */
 
 export default {
@@ -45,7 +45,6 @@ export default {
         scope: "/",
         display: "standalone",
         
-        // 1. Tabbed Display Fix (Added tabbed to override + strict tab_strip config)
         display_override: ["tabbed", "window-controls-overlay", "standalone"],
         tab_strip: {
           new_tab_button: { url: "/" },
@@ -61,14 +60,11 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // 2. FIXED - Scope Extensions: Apni hi origin nahi dalni hai
-        // Definition: Scope extensions allow your PWA to define additional URL domains that are considered in-scope
-        // Example: PWA example.com par hai to auth.example.com aur en.example.com add kar sakte ho
-        // Isliye yahan dusri domains daali hai, self origin hataya hai
-        scope_extensions: [
-          { origin: "https://auth.example.com" },
-          { origin: "https://en.example.com" }
-        ],
+        // FIXED: scope_extensions hataya - kyunki extra domain ke liye .well-known/web-app-origin-association file chahiye hoti hai
+        // Agar tumhare pass auth.example.com jaisa domain nahi hai to isko hata dena hi 100% score ke liye sahi hai
+        // Agar kabhi chahiye ho to aise add karna:
+        // scope_extensions: [{ origin: "https://auth.animebox.khanaasif57828.workers.dev" }],
+        // aur us domain par /.well-known/web-app-origin-association file host karni padegi
         
         related_applications: [
           {
@@ -99,17 +95,26 @@ export default {
           params: { title: "title", text: "text", url: "url" }
         },
         
-        // 3. FIXED - Widgets: Adaptive cards with text, images, and actions related to your app. On Windows, widgets appear over the desktop when the user clicks the widget taskbar icon or presses Win+W.
-        // ms_ac_template -> template (new spec) + update field added
+        // FIXED: Widgets - 100% valid as per Microsoft docs
+        // name, description, tag, template, ms_ac_template, data, screenshots, icons sab required
         widgets: [
           {
             name: "AnimeBox Widget",
             description: "Quick access to latest anime updates",
             tag: "animebox-widget",
-            template: "/widget-template.json",
+            template: "animebox-widget-template",
+            ms_ac_template: "/widget-template.json",
             data: "/widget-data.json",
             type: "application/json",
             update: 86400,
+            screenshots: [
+              {
+                src: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&h=400&fit=crop",
+                sizes: "600x400",
+                type: "image/jpeg",
+                label: "AnimeBox Widget Preview"
+              }
+            ],
             icons: [
               { src: "/icon-192.png", sizes: "192x192", type: "image/png" }
             ]
@@ -236,6 +241,19 @@ export default {
         self.addEventListener('sync', (event) => { console.log('Background sync active'); });
         self.addEventListener('periodicsync', (event) => { console.log('Periodic sync active'); });
         self.addEventListener('push', (event) => { console.log('Push notification received'); });
+
+        // Widgets support for Windows Widgets Board
+        self.addEventListener("widgetinstall", event => {
+          event.waitUntil(renderWidget(event.widget));
+        });
+
+        async function renderWidget(widget) {
+          const templateUrl = widget.definition.msAcTemplate;
+          const dataUrl = widget.definition.data;
+          const template = await (await fetch(templateUrl)).text();
+          const data = await (await fetch(dataUrl)).text();
+          await self.widgets.updateByTag(widget.definition.tag, {template, data});
+        }
       `;
       return new Response(swScript, {
         headers: {
@@ -245,31 +263,50 @@ export default {
       });
     }
 
-    // FIXED: Widgets ke liye required template aur data files - Adaptive Cards
     if (url.pathname === "/widget-template.json") {
-      return json({
+      return new Response(JSON.stringify({
         type: "AdaptiveCard",
+        $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
         version: "1.5",
         body: [
-          { type: "TextBlock", text: "AnimeBox", weight: "Bolder", size: "Medium" },
-          { type: "TextBlock", text: "${title}", wrap: true },
-          { type: "Image", url: "${imageUrl}", size: "Medium" }
+          {
+            type: "TextBlock",
+            size: "Medium",
+            weight: "Bolder",
+            text: "AnimeBox",
+            horizontalAlignment: "Center"
+          },
+          {
+            type: "TextBlock",
+            spacing: "Large",
+            wrap: true,
+            text: "${title}",
+            horizontalAlignment: "Center"
+          },
+          {
+            type: "Image",
+            url: "${imageUrl}",
+            size: "Medium",
+            horizontalAlignment: "Center"
+          }
         ],
         actions: [
-          { type: "Action.OpenUrl", title: "Open App", url: "/" }
+          {
+            type: "Action.OpenUrl",
+            title: "Open AnimeBox",
+            url: "/"
+          }
         ]
+      }), {
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
       });
     }
 
     if (url.pathname === "/widget-data.json") {
       return json({
-        title: "Latest Anime Updates",
-        imageUrl: "/icon-192.png"
+        title: "Latest Anime Updates - Watch Now",
+        imageUrl: "https://animebox.khanaasif57828.workers.dev/icon-192.png"
       });
-    }
-
-    if (url.pathname === "/widget-data.json" || url.pathname === "/widget-template.json") {
-      // fallback already handled above
     }
 
     if (url.pathname.includes("icon-192")) {
