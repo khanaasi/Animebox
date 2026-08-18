@@ -327,6 +327,7 @@ export default {
       const settings = (await kvGet("settings", {})) || {};
       let hashGenres = newPost.genres.split(/[\s,]+/).filter(g=>g).map(g => '#' + g).join(' ');
       const tgMsg = `Name: <b>${newPost.name}</b> ❞\n\nCategory:\n<b>${newPost.category}</b> ❞\n\nGenre: ${hashGenres}\nSeason: ${newPost.season || '01'}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${newPost.story}`;
+      ctx.waitUntil(sendTelegramNotification(settings, tgMsg, newPost.image_url));
 
       return json({ success: true, post: newPost });
     }
@@ -488,9 +489,21 @@ if (url.pathname === "/api/get-link") {
 
     if (url.pathname === "/api/settings" && method === "POST") {
       const body = await request.json();
-      if (body.settings) await kvSet("settings", body.settings);
-      if (body.shorteners) await kvSet("shorteners", body.shorteners);
+      const oldSettings = (await kvGet("settings", {})) || {};
+      const mergedSettings = { ...oldSettings };
+      for (const [key, value] of Object.entries(body.settings || {})) {
+        if (value !== undefined && value !== "") mergedSettings[key] = value;
+      }
+      if (body.shorteners && body.shorteners.length > 0) {
+        await kvSet("shorteners", body.shorteners);
+        mergedSettings.shorteners = body.shorteners;
+      } else if (body.shorteners === false) {
+        await kvSet("shorteners", []);
+        mergedSettings.shorteners = [];
+      }
       if (body.paid_requests) await kvSet("paid_requests", body.paid_requests);
+      if (Object.keys(mergedSettings).length > 0) await kvSet("settings", mergedSettings);
+      if (body.settings) await kvSet("settings", mergedSettings);
       return json({ success: true });
     }
 
@@ -578,8 +591,15 @@ function renderFullAppHTML() {
     .detail-info h2 { font-size: 18px; color: var(--primary); margin-bottom: 6px; }
     .detail-info p { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 4px; }
 
-    .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 16px; display: none; }
+    .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px; display: none; transition:0.3s; }
+    .player-box.theater { aspect-ratio: 16/10; max-height: 70vh; }
+    .player-box.full { position: fixed; inset: 0; z-index: 9999; aspect-ratio: auto; width: 100vw; height: 100vh; border-radius: 0; }
     .player-box iframe { width: 100%; height: 100%; border: none; }
+    .player-controls { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; scrollbar-width: none; }
+    .player-controls::-webkit-scrollbar { display: none; }
+    .pctrl-btn { background: var(--card); border: 1px solid var(--border); color: #fff; padding: 8px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; white-space: nowrap; cursor: pointer; }
+    .pctrl-btn.primary { background: var(--gradient); color: #000; }
+    .pctrl-btn:hover { background: var(--primary); color: #000; }
 
     .ep-list { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 14px; }
     .ep-btn { background: rgba(0,255,102,0.06); border: 1px solid var(--border); color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; margin: 4px; }
@@ -631,6 +651,13 @@ function renderFullAppHTML() {
     <button class="back-btn" onclick="goHome()"><i class="fa-solid fa-arrow-left"></i> Back to Catalog</button>
     <div class="detail-meta-box" id="detailMeta"></div>
     <div class="player-box" id="playerBox"></div>
+    <div class="player-controls" id="playerControls" style="display:none;">
+      <button class="pctrl-btn" onclick="prevEp()">⬅️ Back</button>
+      <button class="pctrl-btn primary" onclick="nextEp()">Next Episode ➡️</button>
+      <button class="pctrl-btn" onclick="toggleTheater()">🎬 Small / Big</button>
+      <button class="pctrl-btn" onclick="togglePiP()">📺 PiP Popup</button>
+      <button class="pctrl-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+    </div>
     <div class="ep-list" id="epListContainer"></div>
   </div>
 
@@ -657,10 +684,13 @@ function renderFullAppHTML() {
       </div>
 
       <div id="adminBody" style="display:none;">
-        <div style="display:flex; gap:4px; margin-bottom:14px; overflow-x:auto;">
+        <div style="display:flex; gap:4px; margin-bottom:14px; overflow-x:auto; flex-wrap:wrap;">
           <button class="ep-btn active" onclick="setAdminTab('post')">Add Post</button>
           <button class="ep-btn" onclick="setAdminTab('ep')">Episodes</button>
+          <button class="ep-btn" onclick="setAdminTab('del')">Delete Posts</button>
+          <button class="ep-btn" onclick="setAdminTab('short')">Shorteners</button>
           <button class="ep-btn" onclick="setAdminTab('vip')">VIP Passes</button>
+          <button class="ep-btn" onclick="setAdminTab('paid')">Decrypt Keys</button>
           <button class="ep-btn" onclick="setAdminTab('cfg')">Settings</button>
         </div>
 
@@ -727,6 +757,7 @@ function renderFullAppHTML() {
             <input type="text" id="epDlLink" class="form-control" placeholder="https://drive.google.com/...">
           </div>
           <button class="btn-action" onclick="saveEpisode()">Save Episode</button>
+          <div id="epAdminList" style="margin-top:12px;"></div>
         </div>
 
         <div id="tabVip" style="display:none;">
@@ -748,6 +779,24 @@ function renderFullAppHTML() {
             </select>
           </div>
           <button class="btn-action" onclick="saveVipUser()">Activate VIP Pass</button>
+        </div>
+
+        
+        <div id="tabDel" style="display:none;">
+          <h4 style="color:#ff4d4d; margin-bottom:10px;">Delete Anime Posts</h4>
+          <div id="deleteList" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+        </div>
+        <div id="tabShort" style="display:none;">
+          <div class="form-group"><label>Shortener Domain</label><input type="text" id="cfgShDom" class="form-control" placeholder="adrinolinks.in"></div>
+          <div class="form-group"><label>API Key</label><input type="text" id="cfgShKey" class="form-control"></div>
+          <button class="btn-action" onclick="addShortener()">Add Shortener</button>
+          <div id="shortList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+        </div>
+        <div id="tabPaid" style="display:none;">
+          <div class="form-group"><label>Decrypt Password</label><input type="text" id="paidPass" class="form-control"></div>
+          <div class="form-group"><label>Original Link</label><input type="text" id="paidUrl" class="form-control"></div>
+          <button class="btn-action" onclick="addPaidRequest()">Add Decrypt Key</button>
+          <div id="paidList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
         </div>
 
         <div id="tabCfg" style="display:none;">
