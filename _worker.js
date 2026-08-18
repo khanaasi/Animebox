@@ -87,10 +87,12 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // ✨ FIXED: Added scope_extensions to resolve the PWABuilder Error ✨
+        // ✨ FIXED: Removed wildcards (*.) to strictly pass PWABuilder origin requirements ✨
         scope_extensions: [
-          { origin: "*.workers.dev" },
-          { origin: "*.t.me" }
+          { origin: "https://animebox.khanaasif57828.workers.dev" },
+          { origin: "https://t.me" },
+          { origin: "https://telegram.org" },
+          { origin: "https://api.telegram.org" }
         ],
         
         related_applications: [
