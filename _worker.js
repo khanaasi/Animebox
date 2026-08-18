@@ -91,7 +91,7 @@ export default {
   { "origin": "https://auth.khanaasif57828.workers.dev" },
   { "origin": "https://t.me" },
   { "origin": "https://telegram.org" }
-],
+]
         
         related_applications: [
           {
