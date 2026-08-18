@@ -1,6 +1,6 @@
 /**
  * AnimeBox / Asi Anime - Cloudflare Worker Core Engine
- * FIXED 100% PWA SCORE EDITION - ORIGINAL STRUCTURE PRESERVED
+ * SINGLE SITE + APK EDITION - 1 SITE ONLY - 44/45 READY - ORIGINAL STRUCTURE PRESERVED
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Category->Genre Filtering, Bot Notifications & Auto VIP Deletion.
  */
@@ -85,11 +85,7 @@ export default {
         background_color: "#05080c",
         theme_color: "#00ff66",
         categories: ["entertainment", "video", "multimedia"],
-        iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
-        "scope_extensions": [
-          { "origin": "https://auth.khanaasif57828.workers.dev" }
-        ],
-        related_applications: [
+        iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",        related_applications: [
           {
             platform: "webapp",
             url: "https://animebox.khanaasif57828.workers.dev/manifest.json"
