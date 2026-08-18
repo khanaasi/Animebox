@@ -87,12 +87,11 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // ✨ FIXED: Removed wildcards (*.) to strictly pass PWABuilder origin requirements ✨
+        // ✨ FIXED: Added specific origins to satisfy PWABuilder scope_extensions validation ✨
         scope_extensions: [
-          { origin: "https://animebox.khanaasif57828.workers.dev" },
+          { origin: "https://auth.khanaasif57828.workers.dev" },
           { origin: "https://t.me" },
-          { origin: "https://telegram.org" },
-          { origin: "https://api.telegram.org" }
+          { origin: "https://telegram.org" }
         ],
         
         related_applications: [
@@ -199,7 +198,7 @@ export default {
         headers: {
           "Content-Type": "application/manifest+json; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=3600"
+          "Cache-Control": "no-store, no-cache, must-revalidate"
         }
       });
     }
@@ -498,7 +497,7 @@ export default {
       return json({ success: true });
     }
 
-    // Render Frontend HTML - Using exact UI layout with newly added Dynamic Genre Option
+    // Render Frontend HTML
     return new Response(renderFullAppHTML(), {
       headers: { "Content-Type": "text/html;charset=UTF-8" }
     });
