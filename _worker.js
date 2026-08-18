@@ -45,7 +45,7 @@ export default {
         scope: "/",
         display: "standalone",
         
-        // 1. Tabbed Display Fix (Added tabbed to override + strict tab_strip config)
+        // 1. Tabbed Display Fix
         display_override: ["tabbed", "window-controls-overlay", "standalone"],
         tab_strip: {
           new_tab_button: { url: "/" },
@@ -61,9 +61,11 @@ export default {
         categories: ["entertainment", "video", "multimedia"],
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
         
-        // 2. Scope Extensions Fix (Removed wildcard, used EXACT origin URL)
+        // 2. Scope Extensions Fix (Added Wildcards & Subdomains for seamless in-app browsing)
         scope_extensions: [
-          { origin: "https://animebox.khanaasif57828.workers.dev" }
+          { origin: "https://animebox.khanaasif57828.workers.dev" },
+          { origin: "*.animebox.khanaasif57828.workers.dev" },
+          { origin: "*.workers.dev" }
         ],
         
         related_applications: [
@@ -95,17 +97,29 @@ export default {
           params: { title: "title", text: "text", url: "url" }
         },
         
-        // 3. Widgets Fix (Added strictly required icons array for widgets)
+        // 3. Widgets Fix (Strict W3C/Microsoft standards: added screenshots, short_name, auth, update)
         widgets: [
           {
-            name: "AnimeBox Widget",
-            description: "Quick access to latest anime updates",
+            name: "AnimeBox Quick Updates",
+            short_name: "AnimeBox",
+            description: "Quick access to latest anime episodes and updates directly from your home screen.",
             tag: "animebox-widget",
+            template: "/widget-template.json",
             ms_ac_template: "/widget-template.json",
             data: "/widget-data.json",
             type: "application/json",
+            auth: false,
+            update: 3600,
             icons: [
               { src: "/icon-192.png", sizes: "192x192", type: "image/png" }
+            ],
+            screenshots: [
+              {
+                src: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1280&h=720&fit=crop",
+                sizes: "1280x720",
+                type: "image/jpeg",
+                label: "AnimeBox Widget Interface"
+              }
             ]
           }
         ],
@@ -188,7 +202,7 @@ export default {
 
     if (url.pathname === "/sw.js") {
       const swScript = `
-        const CACHE_NAME = 'animebox-pwa-v5';
+        const CACHE_NAME = 'animebox-pwa-v6';
         const STATIC_ASSETS = [
           '/',
           '/manifest.json',
@@ -718,7 +732,7 @@ function renderFullAppHTML() {
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')
-          .then(reg => console.log('PWA SW Active v5'))
+          .then(reg => console.log('PWA SW Active v6'))
           .catch(err => console.log('SW fail:', err));
       });
     }
@@ -1052,4 +1066,3 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-        }
