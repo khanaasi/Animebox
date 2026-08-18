@@ -47,6 +47,7 @@ export default {
       try {
         const tgForm = new FormData();
         tgForm.append("chat_id", settings.chat_id);
+        tgForm.append("parse_mode", "HTML");
         if (photoUrl && photoUrl.startsWith("http")) {
           tgForm.append("photo", photoUrl);
           tgForm.append("caption", text);
@@ -294,7 +295,8 @@ export default {
     // =========================================================================
 
     if (url.pathname === "/api/data" && method === "GET") {
-      const posts = (await kvGet("posts", [])) || [];
+      let posts = (await kvGet("posts", [])) || [];
+      posts.sort((a, b) => b.updatedAt - a.updatedAt);
       const settings = (await kvGet("settings", {
         site_name: "AnimeBox",
         channel_link: "https://t.me/",
@@ -322,10 +324,9 @@ export default {
       posts.unshift(newPost);
       await kvSet("posts", posts);
 
-      // Telegram Bot Auto Post Details
       const settings = (await kvGet("settings", {})) || {};
-      const tgMsg = `🚀 <b>New Anime Added on Portal!</b>\n\n🎬 <b>Name:</b> ${newPost.name}\n📂 <b>Category:</b> ${newPost.category}\n🎭 <b>Genre:</b> ${newPost.genres}\n📺 <b>Season:</b> ${newPost.season}\n\n📖 <b>Story:</b> ${newPost.story}`;
-      ctx.waitUntil(sendTelegramNotification(settings, tgMsg, newPost.image_url));
+      let hashGenres = newPost.genres.split(/[\s,]+/).filter(g=>g).map(g => '#' + g).join(' ');
+      const tgMsg = `Name: <b>${newPost.name}</b> ❞\n\nCategory:\n<b>${newPost.category}</b> ❞\n\nGenre: ${hashGenres}\nSeason: ${newPost.season || '01'}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${newPost.story}`;
 
       return json({ success: true, post: newPost });
     }
@@ -371,47 +372,40 @@ export default {
       return json({ success: true });
     }
 
-    if (url.pathname === "/api/get-link") {
-      const epId = url.searchParams.get("ep_id");
-      const postId = url.searchParams.get("post_id");
-      const userKey = url.searchParams.get("key");
-
-      const episodes = (await kvGet(`ep_${postId}`, [])) || [];
-      const ep = episodes.find(e => e.id === epId);
+if (url.pathname === "/api/get-link") {
+      const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
+      const userEmail = url.searchParams.get("email"); const userKey = url.searchParams.get("key");
+      const deviceId = url.searchParams.get("device_id");
+      const episodes = (await kvGet(`ep_${postId}`, [])) || []; const ep = episodes.find(e => e.id === epId);
       if (!ep) return json({ error: "Episode not found" }, 404);
-
-      const targetUrl = ep.download_link || ep.play_link;
-      if (!targetUrl) return json({ error: "Empty link" }, 400);
-
+      const targetUrl = ep.download_link || ep.play_link; if (!targetUrl) return json({ error: "Empty link" }, 400);
+      if (userEmail && userKey && deviceId) {
+        let premiumUsers = (await kvGet("premium_users", [])) || [];
+        let idx = premiumUsers.findIndex(u => u.email === userEmail && u.key === userKey);
+        if (idx === -1) idx = premiumUsers.findIndex(u => u.key === userKey);
+        if (idx !== -1) {
+          let user = premiumUsers[idx];
+          if (new Date(user.expires_at) > new Date()) {
+            if (!user.device_id) { user.device_id = deviceId; premiumUsers[idx]=user; await kvSet("premium_users", premiumUsers); return json({ direct: true, url: targetUrl }); }
+            else if (user.device_id === deviceId) return json({ direct: true, url: targetUrl });
+            else return json({ error: "Access Denied! Account locked to another device.", direct: false }, 403);
+          }
+        }
+      }
       if (userKey) {
         const premiumUsers = (await kvGet("premium_users", [])) || [];
         const user = premiumUsers.find(u => u.key === userKey || u.email === userKey);
-        if (user && new Date(user.expires_at) > new Date()) {
-          return json({ direct: true, url: targetUrl });
-        }
+        if (user && new Date(user.expires_at) > new Date()) return json({ direct: true, url: targetUrl });
       }
-
       const shorteners = (await kvGet("shorteners", [])) || [];
-      if (shorteners.length === 0) return json({ direct: true, url: targetUrl });
-
-      const activeSh = shorteners[Math.floor(Math.random() * shorteners.length)];
-      try {
-        const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
-        const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`;
-        
-        const res = await fetch(apiEndpoint);
-        const shortLink = (await res.text()).trim();
-        if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink });
-        
-        // Proxy Fallback logic to never fail
-        const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`);
-        const proxyData = await proxyRes.json();
-        if (proxyData.contents && proxyData.contents.trim().startsWith("http")) {
-            return json({ direct: false, url: proxyData.contents.trim() });
-        }
-      } catch (err) {
-        console.error("Shortener failed", err);
+      let activeShorteners = shorteners;
+      if (activeShorteners.length === 0) {
+        const s = (await kvGet("settings", {})) || {};
+        if (s.shorteners && s.shorteners.length > 0) activeShorteners = s.shorteners;
       }
+      if (activeShorteners.length === 0) return json({ direct: true, url: targetUrl });
+      const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
+      try { const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, ""); const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`; const res = await fetch(apiEndpoint); const shortLink = (await res.text()).trim(); if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink }); const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`); const proxyData = await proxyRes.json(); if (proxyData.contents && proxyData.contents.trim().startsWith("http")) { return json({ direct: false, url: proxyData.contents.trim() }); } } catch (err) { console.error("Shortener failed", err); }
       return json({ direct: true, url: targetUrl });
     }
 
@@ -434,7 +428,8 @@ export default {
         id: "usr_" + Date.now(),
         email: body.email.toLowerCase().trim(),
         key: body.key.trim(),
-        expires_at: expiry.toISOString()
+        expires_at: expiry.toISOString(),
+        device_id: null
       };
 
       users = users.filter(u => u.email !== newUser.email && u.key !== newUser.key);
@@ -447,6 +442,17 @@ export default {
       ctx.waitUntil(sendTelegramNotification(settings, tgMsg));
 
       return json({ success: true, user: newUser });
+    }
+
+    if (url.pathname === "/api/upload-image" && method === "POST") {
+      try {
+        const formData = await request.formData(); const file = formData.get("file"); if (!file) return json({ error: "No file provided" }, 400);
+        const tf = new FormData(); tf.append("file", file);
+        const res = await fetch("https://telegra.ph/upload", { method: "POST", body: tf });
+        const data = await res.json();
+        if (data && data[0] && data[0].src) return json({ success: true, url: "https://telegra.ph" + data[0].src });
+        return json({ error: "Upload failed" }, 400);
+      } catch (err) { return json({ error: err.message }, 500); }
     }
 
     if (url.pathname === "/api/upload-telegram" && method === "POST") {
