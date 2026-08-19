@@ -3,6 +3,7 @@
  * SINGLE SITE + APK EDITION - 1 SITE ONLY - 44/45 READY - ORIGINAL STRUCTURE PRESERVED
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Category->Genre Filtering, Bot Notifications & Auto VIP Deletion.
+ * FULLY FIXED: Deletions, Shorteners, Settings Clearing, and Episodes.
  */
 
 export default {
@@ -303,7 +304,9 @@ export default {
         player_password: "stream123",
         admin_pin: "admin123"
       })) || {};
-      return json({ posts, settings });
+      const shorteners = (await kvGet("shorteners", [])) || [];
+      const paid_requests = (await kvGet("paid_requests", [])) || [];
+      return json({ posts, settings, shorteners, paid_requests });
     }
 
     if (url.pathname === "/api/posts" && method === "POST") {
@@ -373,7 +376,7 @@ export default {
       return json({ success: true });
     }
 
-if (url.pathname === "/api/get-link") {
+    if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
       const userEmail = url.searchParams.get("email"); const userKey = url.searchParams.get("key");
       const deviceId = url.searchParams.get("device_id");
@@ -491,19 +494,24 @@ if (url.pathname === "/api/get-link") {
       const body = await request.json();
       const oldSettings = (await kvGet("settings", {})) || {};
       const mergedSettings = { ...oldSettings };
-      for (const [key, value] of Object.entries(body.settings || {})) {
-        if (value !== undefined && value !== "") mergedSettings[key] = value;
+      
+      // Allow empty strings to overwrite and clear settings
+      if (body.settings) {
+        for (const [key, value] of Object.entries(body.settings)) {
+          if (value !== undefined) mergedSettings[key] = value;
+        }
+        await kvSet("settings", mergedSettings);
       }
-      if (body.shorteners && body.shorteners.length > 0) {
+      
+      if (body.shorteners !== undefined) {
         await kvSet("shorteners", body.shorteners);
         mergedSettings.shorteners = body.shorteners;
-      } else if (body.shorteners === false) {
-        await kvSet("shorteners", []);
-        mergedSettings.shorteners = [];
       }
-      if (body.paid_requests) await kvSet("paid_requests", body.paid_requests);
-      if (Object.keys(mergedSettings).length > 0) await kvSet("settings", mergedSettings);
-      if (body.settings) await kvSet("settings", mergedSettings);
+      
+      if (body.paid_requests !== undefined) {
+        await kvSet("paid_requests", body.paid_requests);
+      }
+      
       return json({ success: true });
     }
 
@@ -734,7 +742,7 @@ function renderFullAppHTML() {
         <div id="tabEp" style="display:none;">
           <div class="form-group">
             <label>Target Anime Post</label>
-            <select id="epPostSelect" class="form-control"></select>
+            <select id="epPostSelect" class="form-control" onchange="loadAdminEpisodes()"></select>
           </div>
           <div class="form-group">
             <label>Episode Label</label>
@@ -757,7 +765,7 @@ function renderFullAppHTML() {
             <input type="text" id="epDlLink" class="form-control" placeholder="https://drive.google.com/...">
           </div>
           <button class="btn-action" onclick="saveEpisode()">Save Episode</button>
-          <div id="epAdminList" style="margin-top:12px;"></div>
+          <div id="epAdminList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
 
         <div id="tabVip" style="display:none;">
@@ -784,22 +792,23 @@ function renderFullAppHTML() {
         
         <div id="tabDel" style="display:none;">
           <h4 style="color:#ff4d4d; margin-bottom:10px;">Delete Anime Posts</h4>
-          <div id="deleteList" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+          <div id="deleteList" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
         <div id="tabShort" style="display:none;">
           <div class="form-group"><label>Shortener Domain</label><input type="text" id="cfgShDom" class="form-control" placeholder="adrinolinks.in"></div>
           <div class="form-group"><label>API Key</label><input type="text" id="cfgShKey" class="form-control"></div>
           <button class="btn-action" onclick="addShortener()">Add Shortener</button>
-          <div id="shortList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+          <div id="shortList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
         <div id="tabPaid" style="display:none;">
           <div class="form-group"><label>Decrypt Password</label><input type="text" id="paidPass" class="form-control"></div>
           <div class="form-group"><label>Original Link</label><input type="text" id="paidUrl" class="form-control"></div>
           <button class="btn-action" onclick="addPaidRequest()">Add Decrypt Key</button>
-          <div id="paidList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;"></div>
+          <div id="paidList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
 
         <div id="tabCfg" style="display:none;">
+          <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Leave a field empty and click Save to clear/delete it.</p>
           <div class="form-group">
             <label>Telegram Bot Token</label>
             <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF...">
@@ -816,14 +825,6 @@ function renderFullAppHTML() {
             <label>Admin Access PIN</label>
             <input type="text" id="cfgPin" class="form-control" placeholder="admin123">
           </div>
-          <div class="form-group">
-            <label>Shortener Domain (e.g. adrinolinks.in)</label>
-            <input type="text" id="cfgShDom" class="form-control">
-          </div>
-          <div class="form-group">
-            <label>Shortener API Secret Key</label>
-            <input type="text" id="cfgShKey" class="form-control">
-          </div>
           <button class="btn-action" onclick="saveSettings()">Save Global Config</button>
         </div>
       </div>
@@ -831,7 +832,7 @@ function renderFullAppHTML() {
   </div>
 
   <script>
-    let appData = { posts: [], settings: {} };
+    let appData = { posts: [], settings: {}, shorteners: [], paid_requests: [] };
     let currentPost = null;
     let currentCategory = 'ALL';
     let currentGenre = 'ALL';
@@ -1093,23 +1094,152 @@ function renderFullAppHTML() {
       if (pin === expected) {
         document.getElementById('adminLock').style.display = 'none';
         document.getElementById('adminBody').style.display = 'block';
-        updateEpPostDropdown();
+        loadAdminDataUI();
       } else {
         alert('Invalid Admin PIN!');
       }
     }
 
     function setAdminTab(tab) {
-      document.getElementById('tabPost').style.display = tab === 'post' ? 'block' : 'none';
-      document.getElementById('tabEp').style.display = tab === 'ep' ? 'block' : 'none';
-      document.getElementById('tabVip').style.display = tab === 'vip' ? 'block' : 'none';
-      document.getElementById('tabCfg').style.display = tab === 'cfg' ? 'block' : 'none';
+      ['Post', 'Ep', 'Del', 'Short', 'Vip', 'Paid', 'Cfg'].forEach(t => {
+        const el = document.getElementById('tab' + t);
+        if (el) el.style.display = 'none';
+      });
+      const activeEl = document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1));
+      if (activeEl) activeEl.style.display = 'block';
     }
 
-    function updateEpPostDropdown() {
+    // ==========================================
+    // ADMIN UI POPULATION & DELETION LOGIC (FIXED)
+    // ==========================================
+    
+    function loadAdminDataUI() {
+      // Setup Post Dropdown for Episodes
       const sel = document.getElementById('epPostSelect');
-      sel.innerHTML = appData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
+      sel.innerHTML = '<option value="">-- Select Anime --</option>' + appData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
+      
+      // Populate Delete Posts List
+      const delList = document.getElementById('deleteList');
+      delList.innerHTML = appData.posts.map(p => \`
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
+          <span style="font-size:12px; color:#fff; word-break:break-all;">\${p.name}</span>
+          <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deletePost('\${p.id}')">Delete</button>
+        </div>
+      \`).join('');
+
+      // Populate Settings
+      document.getElementById('cfgBotToken').value = appData.settings?.bot_token || '';
+      document.getElementById('cfgChatId').value = appData.settings?.chat_id || '';
+      document.getElementById('cfgTg').value = appData.settings?.channel_link || '';
+      document.getElementById('cfgPin').value = appData.settings?.admin_pin || '';
+
+      // Populate Shorteners
+      const shortList = document.getElementById('shortList');
+      shortList.innerHTML = (appData.shorteners || []).map((s, i) => \`
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
+          <span style="font-size:12px; color:#fff; word-break:break-all;">\${s.domain}</span>
+          <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deleteShortener(\${i})">Delete</button>
+        </div>
+      \`).join('');
+
+      // Populate Paid Keys
+      const paidList = document.getElementById('paidList');
+      paidList.innerHTML = (appData.paid_requests || []).map((k, i) => \`
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
+          <span style="font-size:12px; color:#fff; word-break:break-all;">\${k.password}</span>
+          <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deletePaidKey(\${i})">Delete</button>
+        </div>
+      \`).join('');
     }
+
+    async function loadAdminEpisodes() {
+      const postId = document.getElementById('epPostSelect').value;
+      const epList = document.getElementById('epAdminList');
+      if(!postId) { epList.innerHTML = ''; return; }
+      const res = await fetch(\`/api/episodes?post_id=\${postId}\`);
+      const data = await res.json();
+      epList.innerHTML = data.episodes.map(e => \`
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
+          <span style="font-size:12px; color:#fff; word-break:break-all;">Ep \${e.label} - \${e.quality}</span>
+          <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deleteEpisode('\${e.id}', '\${postId}')">Delete</button>
+        </div>
+      \`).join('');
+    }
+
+    async function deletePost(id) {
+      if(!confirm("Are you sure you want to delete this post and its episodes?")) return;
+      await fetch(\`/api/posts/\${id}\`, { method: 'DELETE' });
+      showToast('Post Deleted!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    async function deleteEpisode(epId, postId) {
+      if(!confirm("Delete this episode?")) return;
+      await fetch(\`/api/episodes/\${epId}?post_id=\${postId}\`, { method: 'DELETE' });
+      showToast('Episode Deleted!');
+      loadAdminEpisodes();
+    }
+
+    async function addShortener() {
+      const domain = document.getElementById('cfgShDom').value.trim();
+      const api_key = document.getElementById('cfgShKey').value.trim();
+      if(!domain || !api_key) return alert("Fill both fields");
+      let shorteners = appData.shorteners || [];
+      shorteners.push({domain, api_key});
+      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shorteners }) });
+      document.getElementById('cfgShDom').value = ''; document.getElementById('cfgShKey').value = '';
+      showToast('Shortener Added!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    async function deleteShortener(index) {
+      if(!confirm("Delete this shortener?")) return;
+      let shorteners = appData.shorteners || [];
+      shorteners.splice(index, 1);
+      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shorteners }) });
+      showToast('Shortener Deleted!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    async function addPaidRequest() {
+      const password = document.getElementById('paidPass').value.trim();
+      const original_link = document.getElementById('paidUrl').value.trim();
+      if(!password || !original_link) return alert("Fill both fields");
+      let paid_requests = appData.paid_requests || [];
+      paid_requests.push({password, original_link});
+      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paid_requests }) });
+      document.getElementById('paidPass').value = ''; document.getElementById('paidUrl').value = '';
+      showToast('Key Added!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    async function deletePaidKey(index) {
+      if(!confirm("Delete this key?")) return;
+      let paid_requests = appData.paid_requests || [];
+      paid_requests.splice(index, 1);
+      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paid_requests }) });
+      showToast('Key Deleted!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    async function saveSettings() {
+      const channel_link = document.getElementById('cfgTg').value.trim();
+      const admin_pin = document.getElementById('cfgPin').value.trim();
+      const bot_token = document.getElementById('cfgBotToken').value.trim();
+      const chat_id = document.getElementById('cfgChatId').value.trim();
+      
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { channel_link, admin_pin, bot_token, chat_id } })
+      });
+      showToast('Settings Saved!');
+      await loadData(); loadAdminDataUI();
+    }
+
+    // ==========================================
+    // UPLOAD & SAVE LOGIC
+    // ==========================================
 
     async function uploadTgImage() {
       const file = document.getElementById('pImgFile').files[0];
@@ -1144,8 +1274,9 @@ function renderFullAppHTML() {
         body: JSON.stringify({ name, image_url, category, genres, season, release, story })
       });
       showToast('Post Published & Sent to Telegram!');
-      closeModal('adminModal');
-      await loadData();
+      document.getElementById('pName').value = '';
+      document.getElementById('pImgUrl').value = '';
+      await loadData(); loadAdminDataUI();
     }
 
     async function saveEpisode() {
@@ -1155,13 +1286,18 @@ function renderFullAppHTML() {
       const play_link = document.getElementById('epPlayLink').value.trim();
       const download_link = document.getElementById('epDlLink').value.trim();
 
+      if(!post_id || !label) return alert('Select Post and enter Episode Label');
+
       await fetch('/api/episodes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ post_id, label, quality, play_link, download_link })
       });
       showToast('Episode Attached!');
-      closeModal('adminModal');
+      document.getElementById('epNum').value = '';
+      document.getElementById('epPlayLink').value = '';
+      document.getElementById('epDlLink').value = '';
+      loadAdminEpisodes();
     }
 
     async function saveVipUser() {
@@ -1169,35 +1305,16 @@ function renderFullAppHTML() {
       const key = document.getElementById('vipKey').value.trim();
       const days = document.getElementById('vipDays').value;
 
+      if(!email || !key) return alert("Fill all fields");
+
       await fetch('/api/premium', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, key, days })
       });
       showToast('VIP Pass Created & TG Alert Sent!');
-      closeModal('adminModal');
-    }
-
-    async function saveSettings() {
-      const channel_link = document.getElementById('cfgTg').value.trim();
-      const admin_pin = document.getElementById('cfgPin').value.trim();
-      const bot_token = document.getElementById('cfgBotToken').value.trim();
-      const chat_id = document.getElementById('cfgChatId').value.trim();
-      const shDom = document.getElementById('cfgShDom').value.trim();
-      const shKey = document.getElementById('cfgShKey').value.trim();
-
-      const shorteners = shDom && shKey ? [{ domain: shDom, api_key: shKey }] : [];
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          settings: { channel_link, admin_pin, bot_token, chat_id },
-          shorteners
-        })
-      });
-      showToast('Settings Saved!');
-      closeModal('adminModal');
-      await loadData();
+      document.getElementById('vipEmail').value = '';
+      document.getElementById('vipKey').value = '';
     }
 
     function openVIPModal() {
@@ -1236,4 +1353,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-}
+            }
