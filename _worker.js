@@ -3,13 +3,14 @@
  * SINGLE SITE + APK EDITION - 1 SITE ONLY - 44/45 READY - ORIGINAL STRUCTURE PRESERVED
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Category->Genre Filtering, Bot Notifications & Auto VIP Deletion.
- * FULLY FIXED: Deletions, Shorteners, Settings Clearing, and Episodes.
+ * FULLY FIXED: Deletions, Shorteners, Settings Clearing, Episodes, SEO, and Security.
  */
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const method = request.method;
+    const adminPinHeader = request.headers.get("X-Admin-Pin"); // SECURITY: Read Admin PIN from headers
 
     const json = (data, status = 200) =>
       new Response(JSON.stringify(data), {
@@ -28,6 +29,13 @@ export default {
       if (env.ANIME_KV) {
         await env.ANIME_KV.put(key, JSON.stringify(val));
       }
+    };
+
+    // SECURITY HELPER: Check if request is from real Admin
+    const isAdmin = async () => {
+      const s = (await kvGet("settings", {})) || {};
+      const actualPin = s.admin_pin || "admin123";
+      return adminPinHeader === actualPin;
     };
 
     // Auto-Delete Expired Premium VIP Passes (Background Task)
@@ -198,7 +206,7 @@ export default {
 
     if (url.pathname === "/sw.js") {
       const swScript = `
-        const CACHE_NAME = 'animebox-pwa-v6';
+        const CACHE_NAME = 'animebox-pwa-v7';
         const STATIC_ASSETS = [
           '/',
           '/manifest.json',
@@ -298,18 +306,25 @@ export default {
     if (url.pathname === "/api/data" && method === "GET") {
       let posts = (await kvGet("posts", [])) || [];
       posts.sort((a, b) => b.updatedAt - a.updatedAt);
+      
       const settings = (await kvGet("settings", {
         site_name: "AnimeBox",
-        channel_link: "https://t.me/",
-        player_password: "stream123",
-        admin_pin: "admin123"
+        channel_link: "https://t.me/"
       })) || {};
+      
+      // FIX: HIDDEN ADMIN SECRETS FROM PUBLIC API
+      const safeSettings = { ...settings };
+      delete safeSettings.admin_pin;
+      delete safeSettings.bot_token;
+
       const shorteners = (await kvGet("shorteners", [])) || [];
       const paid_requests = (await kvGet("paid_requests", [])) || [];
-      return json({ posts, settings, shorteners, paid_requests });
+      return json({ posts, settings: safeSettings, shorteners, paid_requests });
     }
 
+    // SECURE ADMIN APIs - Check PIN first
     if (url.pathname === "/api/posts" && method === "POST") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const body = await request.json();
       let posts = (await kvGet("posts", [])) || [];
       const newPost = {
@@ -336,6 +351,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const id = url.pathname.split("/").pop();
       let posts = (await kvGet("posts", [])) || [];
       posts = posts.filter(p => p.id !== id);
@@ -351,6 +367,7 @@ export default {
     }
 
     if (url.pathname === "/api/episodes" && method === "POST") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const body = await request.json();
       let episodes = (await kvGet(`ep_${body.post_id}`, [])) || [];
       const newEp = {
@@ -368,6 +385,7 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/episodes/") && method === "DELETE") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const epId = url.pathname.split("/").pop();
       const postId = url.searchParams.get("post_id");
       let episodes = (await kvGet(`ep_${postId}`, [])) || [];
@@ -376,40 +394,76 @@ export default {
       return json({ success: true });
     }
 
+    // FIX: Get VIP Users for Admin Panel
+    if (url.pathname === "/api/admin/vip" && method === "GET") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
+      const users = (await kvGet("premium_users", [])) || [];
+      return json({ users });
+    }
+
+    // FIX: Delete VIP User from Admin Panel
+    if (url.pathname.startsWith("/api/admin/vip/") && method === "DELETE") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
+      const email = decodeURIComponent(url.pathname.split("/").pop());
+      let users = (await kvGet("premium_users", [])) || [];
+      users = users.filter(u => u.email !== email);
+      await kvSet("premium_users", users);
+      return json({ success: true });
+    }
+
     if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
       const userEmail = url.searchParams.get("email"); const userKey = url.searchParams.get("key");
       const deviceId = url.searchParams.get("device_id");
-      const episodes = (await kvGet(`ep_${postId}`, [])) || []; const ep = episodes.find(e => e.id === epId);
+      
+      const episodes = (await kvGet(`ep_${postId}`, [])) || []; 
+      const ep = episodes.find(e => e.id === epId);
       if (!ep) return json({ error: "Episode not found" }, 404);
-      const targetUrl = ep.download_link || ep.play_link; if (!targetUrl) return json({ error: "Empty link" }, 400);
-      if (userEmail && userKey && deviceId) {
-        let premiumUsers = (await kvGet("premium_users", [])) || [];
-        let idx = premiumUsers.findIndex(u => u.email === userEmail && u.key === userKey);
-        if (idx === -1) idx = premiumUsers.findIndex(u => u.key === userKey);
-        if (idx !== -1) {
-          let user = premiumUsers[idx];
-          if (new Date(user.expires_at) > new Date()) {
-            if (!user.device_id) { user.device_id = deviceId; premiumUsers[idx]=user; await kvSet("premium_users", premiumUsers); return json({ direct: true, url: targetUrl }); }
-            else if (user.device_id === deviceId) return json({ direct: true, url: targetUrl });
-            else return json({ error: "Access Denied! Account locked to another device.", direct: false }, 403);
+      const targetUrl = ep.download_link || ep.play_link; 
+      if (!targetUrl) return json({ error: "Empty link" }, 400);
+      
+      // VIP CHECK (Premium = Direct Link)
+      let isPremium = false;
+      const premiumUsers = (await kvGet("premium_users", [])) || [];
+      if (userKey) {
+        const user = premiumUsers.find(u => u.key === userKey || u.email === userKey);
+        if (user && new Date(user.expires_at) > new Date()) {
+          isPremium = true;
+          // Device lock logic kept intact
+          if (deviceId) {
+            if (!user.device_id) { user.device_id = deviceId; await kvSet("premium_users", premiumUsers); }
+            else if (user.device_id !== deviceId) isPremium = false; // Locked to other device
           }
         }
       }
-      if (userKey) {
-        const premiumUsers = (await kvGet("premium_users", [])) || [];
-        const user = premiumUsers.find(u => u.key === userKey || u.email === userKey);
-        if (user && new Date(user.expires_at) > new Date()) return json({ direct: true, url: targetUrl });
-      }
+
+      if (isPremium) return json({ direct: true, url: targetUrl });
+
+      // FREE USERS (Shortener Logic)
       const shorteners = (await kvGet("shorteners", [])) || [];
       let activeShorteners = shorteners;
       if (activeShorteners.length === 0) {
         const s = (await kvGet("settings", {})) || {};
         if (s.shorteners && s.shorteners.length > 0) activeShorteners = s.shorteners;
       }
-      if (activeShorteners.length === 0) return json({ direct: true, url: targetUrl });
-      const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
-      try { const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, ""); const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`; const res = await fetch(apiEndpoint); const shortLink = (await res.text()).trim(); if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink }); const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`); const proxyData = await proxyRes.json(); if (proxyData.contents && proxyData.contents.trim().startsWith("http")) { return json({ direct: false, url: proxyData.contents.trim() }); } } catch (err) { console.error("Shortener failed", err); }
+      if (activeShorteners.length > 0) {
+        const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
+        try { 
+          const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, ""); 
+          const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`; 
+          const res = await fetch(apiEndpoint); 
+          const shortLink = (await res.text()).trim(); 
+          if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink }); 
+          
+          const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`); 
+          const proxyData = await proxyRes.json(); 
+          if (proxyData.contents && proxyData.contents.trim().startsWith("http")) { 
+            return json({ direct: false, url: proxyData.contents.trim() }); 
+          } 
+        } catch (err) { console.error("Shortener failed", err); }
+      }
+      
+      // Fallback
       return json({ direct: true, url: targetUrl });
     }
 
@@ -422,6 +476,7 @@ export default {
     }
 
     if (url.pathname === "/api/premium" && method === "POST") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const body = await request.json();
       let users = (await kvGet("premium_users", [])) || [];
       
@@ -440,7 +495,6 @@ export default {
       users.unshift(newUser);
       await kvSet("premium_users", users);
 
-      // Telegram Bot Auto Premium Send
       const settings = (await kvGet("settings", {})) || {};
       const tgMsg = `💎 <b>New VIP Pass Activated!</b>\n\n📧 <b>Email:</b> ${newUser.email}\n🔑 <b>Key:</b> ${newUser.key}\n⏳ <b>Expires:</b> ${expiry.toLocaleString()}`;
       ctx.waitUntil(sendTelegramNotification(settings, tgMsg));
@@ -448,18 +502,8 @@ export default {
       return json({ success: true, user: newUser });
     }
 
-    if (url.pathname === "/api/upload-image" && method === "POST") {
-      try {
-        const formData = await request.formData(); const file = formData.get("file"); if (!file) return json({ error: "No file provided" }, 400);
-        const tf = new FormData(); tf.append("file", file);
-        const res = await fetch("https://telegra.ph/upload", { method: "POST", body: tf });
-        const data = await res.json();
-        if (data && data[0] && data[0].src) return json({ success: true, url: "https://telegra.ph" + data[0].src });
-        return json({ error: "Upload failed" }, 400);
-      } catch (err) { return json({ error: err.message }, 500); }
-    }
-
     if (url.pathname === "/api/upload-telegram" && method === "POST") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       try {
         const formData = await request.formData();
         const file = formData.get("file");
@@ -491,27 +535,24 @@ export default {
     }
 
     if (url.pathname === "/api/settings" && method === "POST") {
+      if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const body = await request.json();
       const oldSettings = (await kvGet("settings", {})) || {};
       const mergedSettings = { ...oldSettings };
       
-      // Allow empty strings to overwrite and clear settings
       if (body.settings) {
         for (const [key, value] of Object.entries(body.settings)) {
           if (value !== undefined) mergedSettings[key] = value;
         }
         await kvSet("settings", mergedSettings);
       }
-      
       if (body.shorteners !== undefined) {
         await kvSet("shorteners", body.shorteners);
         mergedSettings.shorteners = body.shorteners;
       }
-      
       if (body.paid_requests !== undefined) {
         await kvSet("paid_requests", body.paid_requests);
       }
-      
       return json({ success: true });
     }
 
@@ -528,9 +569,12 @@ function renderFullAppHTML() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>AnimeBox - Ultimate Anime & Movie Portal</title>
   
-  <meta name="description" content="Watch and download high-quality anime, dramas, and movies with instant streaming and VIP pass support.">
+  <!-- FIX: GOOGLE SEO TAGS ADDED -->
+  <title>Krt Anime | Watch Hindi Sub & Hindi Dub Anime Online</title>
+  <meta name="description" content="Best website to download and watch Hindi dub anime, English sub anime, and latest series for free.">
+  <meta name="keywords" content="AnimeBox, Asi Anime, Krt Anime, Hindi Dub, Download Anime">
+  
   <meta name="theme-color" content="#00ff66">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -632,12 +676,19 @@ function renderFullAppHTML() {
 </head>
 <body>
 
+  <!-- FIX: SEO Hidden Headings for Google Ranking -->
+  <div style="display:none;">
+    <h1>Download Latest Hindi Dub Anime</h1>
+    <h2>Watch English Sub Anime in HD</h2>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <header>
     <div class="brand" onclick="goHome()">AnimeBox</div>
     <div class="search-box">
       <i class="fa-solid fa-magnifying-glass"></i>
+      <!-- FIX: Search box updated logic -->
       <input type="text" id="searchInp" placeholder="Search anime, dramas, movie..." oninput="applyFilters()">
     </div>
     <button class="btn-head" onclick="openAdmin()"><i class="fa-solid fa-gear"></i> Admin</button>
@@ -787,6 +838,10 @@ function renderFullAppHTML() {
             </select>
           </div>
           <button class="btn-action" onclick="saveVipUser()">Activate VIP Pass</button>
+          
+          <!-- FIX: VIP Deletion List UI -->
+          <h4 style="margin-top:15px; color:#ff4d4d;">Delete VIP Users</h4>
+          <div id="vipList" style="max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
 
         
@@ -794,12 +849,14 @@ function renderFullAppHTML() {
           <h4 style="color:#ff4d4d; margin-bottom:10px;">Delete Anime Posts</h4>
           <div id="deleteList" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
+        
         <div id="tabShort" style="display:none;">
           <div class="form-group"><label>Shortener Domain</label><input type="text" id="cfgShDom" class="form-control" placeholder="adrinolinks.in"></div>
           <div class="form-group"><label>API Key</label><input type="text" id="cfgShKey" class="form-control"></div>
           <button class="btn-action" onclick="addShortener()">Add Shortener</button>
           <div id="shortList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
+        
         <div id="tabPaid" style="display:none;">
           <div class="form-group"><label>Decrypt Password</label><input type="text" id="paidPass" class="form-control"></div>
           <div class="form-group"><label>Original Link</label><input type="text" id="paidUrl" class="form-control"></div>
@@ -836,6 +893,7 @@ function renderFullAppHTML() {
     let currentPost = null;
     let currentCategory = 'ALL';
     let currentGenre = 'ALL';
+    let sessionPin = ""; // FIX: Store Admin PIN globally for auth
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -860,6 +918,15 @@ function renderFullAppHTML() {
       } catch (e) {
         showToast('App live in offline mode');
       }
+    }
+
+    // FIX: Secure Admin Fetch function
+    async function adminFetch(url, options = {}) {
+      options.headers = {
+        'Content-Type': 'application/json',
+        'X-Admin-Pin': sessionPin
+      };
+      return fetch(url, options);
     }
 
     // Dynamic Category -> Genre Logic
@@ -917,23 +984,29 @@ function renderFullAppHTML() {
       applyFilters();
     }
 
+    // FIX: Search System problem solved
     function applyFilters() {
       let filtered = appData.posts;
-      
-      if (currentCategory !== 'ALL') {
-        filtered = filtered.filter(p => p.category === currentCategory);
-      }
-      if (currentGenre !== 'ALL') {
-        filtered = filtered.filter(p => p.genres && p.genres.includes(currentGenre));
-      }
-      
       const q = document.getElementById('searchInp').value.toLowerCase().trim();
-      if (q) {
-        filtered = filtered.filter(p => 
-          p.name.toLowerCase().includes(q) || 
-          p.genres?.toLowerCase().includes(q) || 
-          p.category?.toLowerCase().includes(q)
-        );
+      
+      // If user types general terms like AnimeBox, show all to avoid blank screen
+      if (q === "animebox" || q === "asi anime" || q === "krt anime") {
+         filtered = appData.posts;
+      } 
+      else {
+          if (currentCategory !== 'ALL') {
+            filtered = filtered.filter(p => p.category === currentCategory);
+          }
+          if (currentGenre !== 'ALL') {
+            filtered = filtered.filter(p => p.genres && p.genres.includes(currentGenre));
+          }
+          if (q) {
+            filtered = filtered.filter(p => 
+              (p.name && p.name.toLowerCase().includes(q)) || 
+              (p.genres && p.genres.toLowerCase().includes(q)) || 
+              (p.category && p.category.toLowerCase().includes(q))
+            );
+          }
       }
       
       renderGrid(filtered);
@@ -1021,21 +1094,20 @@ function renderFullAppHTML() {
       const box = document.getElementById('playerBox');
       if (url) {
         box.style.display = 'block';
-        // RELAXED SANDBOX - Full Embed Support
         box.innerHTML = \`<iframe src="\${url}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe>\`;
         box.scrollIntoView({ behavior: 'smooth' });
       }
     }
 
     async function downloadEp(epId) {
-      showToast('Generating monetized download link...');
+      showToast('Getting link...');
       const key = localStorage.getItem('vip_key') || '';
       const res = await fetch(\`/api/get-link?post_id=\${currentPost.id}&ep_id=\${epId}&key=\${encodeURIComponent(key)}\`);
       const data = await res.json();
       if (data.url) {
         window.open(data.url, '_blank');
       } else {
-        showToast('Download link not set');
+        showToast('Download link error: ' + (data.error || 'Check Link'));
       }
     }
 
@@ -1090,14 +1162,12 @@ function renderFullAppHTML() {
 
     function verifyAdmin() {
       const pin = document.getElementById('adminPinInp').value;
-      const expected = appData.settings?.admin_pin || 'admin123';
-      if (pin === expected) {
-        document.getElementById('adminLock').style.display = 'none';
-        document.getElementById('adminBody').style.display = 'block';
-        loadAdminDataUI();
-      } else {
-        alert('Invalid Admin PIN!');
-      }
+      if(!pin) return alert('Enter PIN!');
+      sessionPin = pin; // Save PIN
+      
+      document.getElementById('adminLock').style.display = 'none';
+      document.getElementById('adminBody').style.display = 'block';
+      loadAdminDataUI();
     }
 
     function setAdminTab(tab) {
@@ -1113,7 +1183,7 @@ function renderFullAppHTML() {
     // ADMIN UI POPULATION & DELETION LOGIC (FIXED)
     // ==========================================
     
-    function loadAdminDataUI() {
+    async function loadAdminDataUI() {
       // Setup Post Dropdown for Episodes
       const sel = document.getElementById('epPostSelect');
       sel.innerHTML = '<option value="">-- Select Anime --</option>' + appData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
@@ -1127,11 +1197,24 @@ function renderFullAppHTML() {
         </div>
       \`).join('');
 
-      // Populate Settings
-      document.getElementById('cfgBotToken').value = appData.settings?.bot_token || '';
-      document.getElementById('cfgChatId').value = appData.settings?.chat_id || '';
+      // Populate Settings (Will not show token to prevent HTML injection leak)
+      document.getElementById('cfgBotToken').value = ""; // Empty for safety
+      document.getElementById('cfgChatId').value = "";
       document.getElementById('cfgTg').value = appData.settings?.channel_link || '';
-      document.getElementById('cfgPin').value = appData.settings?.admin_pin || '';
+      document.getElementById('cfgPin').value = ""; // Safety
+
+      // FIX: Populate VIP Deletion List
+      try {
+        const vipRes = await adminFetch('/api/admin/vip');
+        const vipData = await vipRes.json();
+        const vipList = document.getElementById('vipList');
+        vipList.innerHTML = (vipData.users || []).map(u => \`
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
+            <span style="font-size:12px; color:#fff; word-break:break-all;">\${u.email}</span>
+            <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deleteVipUser('\${encodeURIComponent(u.email)}')">Delete</button>
+          </div>
+        \`).join('');
+      } catch(err) { console.error("VIP fetch failed"); }
 
       // Populate Shorteners
       const shortList = document.getElementById('shortList');
@@ -1158,6 +1241,8 @@ function renderFullAppHTML() {
       if(!postId) { epList.innerHTML = ''; return; }
       const res = await fetch(\`/api/episodes?post_id=\${postId}\`);
       const data = await res.json();
+      
+      // FIX: Episode list with Delete buttons properly displayed
       epList.innerHTML = data.episodes.map(e => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
           <span style="font-size:12px; color:#fff; word-break:break-all;">Ep \${e.label} - \${e.quality}</span>
@@ -1166,39 +1251,45 @@ function renderFullAppHTML() {
       \`).join('');
     }
 
+    // --- SECURE DELETIONS ---
     async function deletePost(id) {
       if(!confirm("Are you sure you want to delete this post and its episodes?")) return;
-      await fetch(\`/api/posts/\${id}\`, { method: 'DELETE' });
-      showToast('Post Deleted!');
-      await loadData(); loadAdminDataUI();
+      const res = await adminFetch(\`/api/posts/\${id}\`, { method: 'DELETE' });
+      if(res.ok) { showToast('Post Deleted!'); await loadData(); loadAdminDataUI(); }
+      else alert("Auth failed");
     }
 
     async function deleteEpisode(epId, postId) {
       if(!confirm("Delete this episode?")) return;
-      await fetch(\`/api/episodes/\${epId}?post_id=\${postId}\`, { method: 'DELETE' });
-      showToast('Episode Deleted!');
-      loadAdminEpisodes();
+      const res = await adminFetch(\`/api/episodes/\${epId}?post_id=\${postId}\`, { method: 'DELETE' });
+      if(res.ok) { showToast('Episode Deleted!'); loadAdminEpisodes(); }
+      else alert("Auth failed");
     }
 
+    async function deleteVipUser(emailParam) {
+      if(!confirm("Delete this VIP User?")) return;
+      const res = await adminFetch(\`/api/admin/vip/\${emailParam}\`, { method: 'DELETE' });
+      if(res.ok) { showToast('VIP User Deleted!'); loadAdminDataUI(); }
+      else alert("Auth failed");
+    }
+
+    // --- SECURE ADDITIONS ---
     async function addShortener() {
       const domain = document.getElementById('cfgShDom').value.trim();
       const api_key = document.getElementById('cfgShKey').value.trim();
       if(!domain || !api_key) return alert("Fill both fields");
       let shorteners = appData.shorteners || [];
       shorteners.push({domain, api_key});
-      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shorteners }) });
-      document.getElementById('cfgShDom').value = ''; document.getElementById('cfgShKey').value = '';
-      showToast('Shortener Added!');
-      await loadData(); loadAdminDataUI();
+      const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ shorteners }) });
+      if(res.ok) { document.getElementById('cfgShDom').value = ''; document.getElementById('cfgShKey').value = ''; showToast('Shortener Added!'); await loadData(); loadAdminDataUI(); }
     }
 
     async function deleteShortener(index) {
       if(!confirm("Delete this shortener?")) return;
       let shorteners = appData.shorteners || [];
       shorteners.splice(index, 1);
-      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shorteners }) });
-      showToast('Shortener Deleted!');
-      await loadData(); loadAdminDataUI();
+      const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ shorteners }) });
+      if(res.ok) { showToast('Shortener Deleted!'); await loadData(); loadAdminDataUI(); }
     }
 
     async function addPaidRequest() {
@@ -1207,19 +1298,16 @@ function renderFullAppHTML() {
       if(!password || !original_link) return alert("Fill both fields");
       let paid_requests = appData.paid_requests || [];
       paid_requests.push({password, original_link});
-      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paid_requests }) });
-      document.getElementById('paidPass').value = ''; document.getElementById('paidUrl').value = '';
-      showToast('Key Added!');
-      await loadData(); loadAdminDataUI();
+      const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests }) });
+      if(res.ok) { document.getElementById('paidPass').value = ''; document.getElementById('paidUrl').value = ''; showToast('Key Added!'); await loadData(); loadAdminDataUI(); }
     }
 
     async function deletePaidKey(index) {
       if(!confirm("Delete this key?")) return;
       let paid_requests = appData.paid_requests || [];
       paid_requests.splice(index, 1);
-      await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paid_requests }) });
-      showToast('Key Deleted!');
-      await loadData(); loadAdminDataUI();
+      const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests }) });
+      if(res.ok) { showToast('Key Deleted!'); await loadData(); loadAdminDataUI(); }
     }
 
     async function saveSettings() {
@@ -1228,13 +1316,11 @@ function renderFullAppHTML() {
       const bot_token = document.getElementById('cfgBotToken').value.trim();
       const chat_id = document.getElementById('cfgChatId').value.trim();
       
-      await fetch('/api/settings', {
+      const res = await adminFetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings: { channel_link, admin_pin, bot_token, chat_id } })
       });
-      showToast('Settings Saved!');
-      await loadData(); loadAdminDataUI();
+      if(res.ok) { showToast('Settings Saved!'); await loadData(); loadAdminDataUI(); }
     }
 
     // ==========================================
@@ -1247,7 +1333,8 @@ function renderFullAppHTML() {
       showToast('Uploading to Telegram Channel...');
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/upload-telegram', { method: 'POST', body: fd });
+      
+      const res = await fetch('/api/upload-telegram', { method: 'POST', body: fd, headers: {'X-Admin-Pin': sessionPin} });
       const data = await res.json();
       if (data.url) {
         document.getElementById('pImgUrl').value = data.url;
@@ -1268,15 +1355,16 @@ function renderFullAppHTML() {
 
       if (!name) return alert('Anime name required!');
 
-      await fetch('/api/posts', {
+      const res = await adminFetch('/api/posts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, image_url, category, genres, season, release, story })
       });
-      showToast('Post Published & Sent to Telegram!');
-      document.getElementById('pName').value = '';
-      document.getElementById('pImgUrl').value = '';
-      await loadData(); loadAdminDataUI();
+      if(res.ok) {
+          showToast('Post Published & Sent to Telegram!');
+          document.getElementById('pName').value = '';
+          document.getElementById('pImgUrl').value = '';
+          await loadData(); loadAdminDataUI();
+      } else { alert("Auth failed"); }
     }
 
     async function saveEpisode() {
@@ -1288,16 +1376,17 @@ function renderFullAppHTML() {
 
       if(!post_id || !label) return alert('Select Post and enter Episode Label');
 
-      await fetch('/api/episodes', {
+      const res = await adminFetch('/api/episodes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ post_id, label, quality, play_link, download_link })
       });
-      showToast('Episode Attached!');
-      document.getElementById('epNum').value = '';
-      document.getElementById('epPlayLink').value = '';
-      document.getElementById('epDlLink').value = '';
-      loadAdminEpisodes();
+      if(res.ok) {
+          showToast('Episode Attached!');
+          document.getElementById('epNum').value = '';
+          document.getElementById('epPlayLink').value = '';
+          document.getElementById('epDlLink').value = '';
+          loadAdminEpisodes();
+      } else alert("Auth failed");
     }
 
     async function saveVipUser() {
@@ -1307,14 +1396,16 @@ function renderFullAppHTML() {
 
       if(!email || !key) return alert("Fill all fields");
 
-      await fetch('/api/premium', {
+      const res = await adminFetch('/api/premium', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, key, days })
       });
-      showToast('VIP Pass Created & TG Alert Sent!');
-      document.getElementById('vipEmail').value = '';
-      document.getElementById('vipKey').value = '';
+      if(res.ok) {
+          showToast('VIP Pass Created & TG Alert Sent!');
+          document.getElementById('vipEmail').value = '';
+          document.getElementById('vipKey').value = '';
+          loadAdminDataUI();
+      } else alert("Auth failed");
     }
 
     function openVIPModal() {
