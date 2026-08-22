@@ -938,14 +938,14 @@ function renderFullAppHTML() {
           <div class="form-group">
             <label>Telegram Bot Token</label>
             <div style="display:flex; gap:6px;">
-              <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF...">
+              <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF..." autocomplete="off">
               <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('bot_token')">🗑 Clear</button>
             </div>
           </div>
           <div class="form-group">
             <label>Telegram Private Channel ID</label>
             <div style="display:flex; gap:6px;">
-              <input type="text" id="cfgChatId" class="form-control" placeholder="-100xxxxxxxxxx">
+              <input type="text" id="cfgChatId" class="form-control" placeholder="-100xxxxxxxxxx" autocomplete="off">
               <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('chat_id')">🗑 Clear</button>
             </div>
           </div>
@@ -959,7 +959,7 @@ function renderFullAppHTML() {
           <div class="form-group">
             <label>Admin Access PIN</label>
             <div style="display:flex; gap:6px;">
-              <input type="text" id="cfgPin" class="form-control" placeholder="admin123">
+              <input type="text" id="cfgPin" class="form-control" placeholder="admin123" autocomplete="off">
               <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('admin_pin')">🗑 Reset to default</button>
             </div>
           </div>
@@ -1563,6 +1563,10 @@ function renderFullAppHTML() {
         showToast('Cleared!');
         const fieldMap = { bot_token: 'cfgBotToken', chat_id: 'cfgChatId', channel_link: 'cfgTg', admin_pin: 'cfgPin' };
         if (fieldMap[key]) document.getElementById(fieldMap[key]).value = '';
+        // FIX: agar PIN clear/reset kiya, to session ka pin bhi turant naye
+        // (default) pin se sync karo - warna isi session ki agli koi bhi
+        // action purane PIN se fail hoti rahegi ("PIN check karo" error)
+        if (key === 'admin_pin') sessionPin = 'admin123';
         await loadData();
       } else {
         alert('Clear fail ho gaya - Auth failed');
@@ -1588,7 +1592,14 @@ function renderFullAppHTML() {
         method: 'POST',
         body: JSON.stringify({ settings })
       });
-      if(res.ok) { showToast('Settings Saved!'); await loadData(); loadAdminDataUI(); }
+      if(res.ok) {
+        showToast('Settings Saved!');
+        // FIX: agar naya PIN save kiya, to isi session ko turant naye PIN
+        // se sync karo - warna agli hi action "PIN check karo" bolke fail
+        // ho jaati thi (session abhi bhi purana PIN yaad rakhta tha)
+        if (admin_pin) sessionPin = admin_pin;
+        await loadData(); loadAdminDataUI();
+      }
       else { alert('Save fail ho gaya - PIN check karo'); }
     }
 
@@ -1713,4 +1724,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-  }
+        }
