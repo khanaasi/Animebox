@@ -106,7 +106,7 @@ export default {
         iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",        related_applications: [
           {
             platform: "webapp",
-            url: "https://animebox.khanaasif57828.workers.dev/manifest.json"
+            url: "https://asianimes.in/manifest.json"
           }
         ],
         prefer_related_applications: false,
@@ -296,7 +296,7 @@ export default {
     if (url.pathname === "/widget-data.json") {
       return json({
         title: "Latest Anime Updates - Watch Now",
-        imageUrl: "https://animebox.khanaasif57828.workers.dev/icon-192.png"
+        imageUrl: "https://asianimes.in/icon-192.png"
       });
     }
 
@@ -386,7 +386,7 @@ export default {
         post_id: body.post_id,
         season: body.season || "",
         label: body.label || "01",
-        quality: body.quality || "HD (720p)",
+        quality: body.quality || "HD",
         play_link: body.play_link || "",
         download_link: body.download_link || ""
       };
@@ -616,9 +616,9 @@ function renderFullAppHTML() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
   <!-- FIX: GOOGLE SEO TAGS ADDED -->
-  <title>Krt Anime | Watch Hindi Sub & Hindi Dub Anime Online</title>
+  <title>ASI Animes | Watch Hindi Sub & Hindi Dub Anime Online</title>
   <meta name="description" content="Best website to download and watch Hindi dub anime, English sub anime, and latest series for free.">
-  <meta name="keywords" content="AnimeBox, Asi Anime, Krt Anime, Hindi Dub, Download Anime">
+  <meta name="keywords" content="ASI Animes, AnimeBox, Hindi Dub, Download Anime">
   
   <meta name="theme-color" content="#00ff66">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -688,11 +688,16 @@ function renderFullAppHTML() {
     .detail-info h2 { font-size: 18px; color: var(--primary); margin-bottom: 6px; }
     .detail-info p { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 4px; }
 
-    .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px; display: none; transition:0.3s; }
+    .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: visible; border: 1px solid var(--border); margin-bottom: 10px; display: none; transition:0.3s; position: relative; }
     .player-box.theater { aspect-ratio: 16/10; max-height: 70vh; }
     .player-box.full { position: fixed; inset: 0; z-index: 9999; aspect-ratio: auto; width: 100vw; height: 100vh; border-radius: 0; }
     .player-box.floating-pip { position: fixed; bottom: 80px; right: 12px; width: 200px; aspect-ratio: 16/9; z-index: 500; box-shadow: 0 6px 24px rgba(0,0,0,0.7); border-radius: 8px; }
-    .player-box iframe { width: 100%; height: 100%; border: none; }
+    .player-menu-btn { position: absolute; top: 8px; right: 8px; z-index: 20; background: rgba(0,0,0,0.55); border: none; color: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; cursor: pointer; align-items: center; justify-content: center; }
+    .player-menu { position: absolute; top: 44px; right: 8px; z-index: 21; background: rgba(15,20,15,0.97); border: 1px solid var(--border); border-radius: 10px; padding: 6px; display: none; min-width: 150px; }
+    .player-menu.open { display: block; }
+    .player-menu-item { padding: 9px 12px; font-size: 12px; color: #fff; cursor: pointer; border-radius: 6px; display: flex; align-items: center; gap: 8px; }
+    .player-menu-item:hover { background: rgba(0,255,102,0.12); color: var(--primary); }
+    .player-box iframe { width: 100%; height: 100%; border: none; border-radius: 12px; }
     .player-controls { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; scrollbar-width: none; }
     .player-controls::-webkit-scrollbar { display: none; }
     .pctrl-btn { background: var(--card); border: 1px solid var(--border); color: #fff; padding: 8px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; white-space: nowrap; cursor: pointer; }
@@ -731,7 +736,7 @@ function renderFullAppHTML() {
   <div class="toast" id="toast"></div>
 
   <header>
-    <div class="brand" onclick="goHome()">AnimeBox</div>
+    <div class="brand" onclick="goHome()">ASI Animes</div>
     <div class="search-box">
       <i class="fa-solid fa-magnifying-glass"></i>
       <!-- FIX: Search box updated logic -->
@@ -755,13 +760,19 @@ function renderFullAppHTML() {
   <div class="detail-view" id="detailView">
     <button class="back-btn" onclick="goHome()"><i class="fa-solid fa-arrow-left"></i> Back to Catalog</button>
     <div class="detail-meta-box" id="detailMeta"></div>
-    <div class="player-box" id="playerBox"></div>
+    <div class="player-box" id="playerBox">
+      <button class="player-menu-btn" id="playerMenuBtn" onclick="togglePlayerMenu()" style="display:none;">
+        <i class="fa-solid fa-ellipsis-vertical"></i>
+      </button>
+      <div class="player-menu" id="playerMenu">
+        <div class="player-menu-item" onclick="toggleTheater(); togglePlayerMenu();"><i class="fa-solid fa-film"></i> Small / Big</div>
+        <div class="player-menu-item" onclick="togglePiP(); togglePlayerMenu();"><i class="fa-solid fa-tv"></i> PiP Popup</div>
+        <div class="player-menu-item" onclick="toggleFullscreen(); togglePlayerMenu();"><i class="fa-solid fa-expand"></i> Fullscreen</div>
+      </div>
+    </div>
     <div class="player-controls" id="playerControls" style="display:none;">
       <button class="pctrl-btn" onclick="prevEp()">⬅️ Back</button>
       <button class="pctrl-btn primary" onclick="nextEp()">Next Episode ➡️</button>
-      <button class="pctrl-btn" onclick="toggleTheater()">🎬 Small / Big</button>
-      <button class="pctrl-btn" onclick="togglePiP()">📺 PiP Popup</button>
-      <button class="pctrl-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
     </div>
     <div class="ep-list" id="epListContainer"></div>
   </div>
@@ -848,9 +859,9 @@ function renderFullAppHTML() {
           <div class="form-group">
             <label>Quality Resolution</label>
             <select id="epQuality" class="form-control">
-              <option value="SD (480p)">SD (480p)</option>
-              <option value="HD (720p)" selected>HD (720p)</option>
-              <option value="FHD (1080p)">FHD (1080p)</option>
+              <option value="SD">SD</option>
+              <option value="HD" selected>HD</option>
+              <option value="FHD">FHD</option>
             </select>
           </div>
           <div class="form-group">
@@ -911,7 +922,7 @@ function renderFullAppHTML() {
         </div>
 
         <div id="tabCfg" style="display:none;">
-          <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Leave a field empty and click Save to clear/delete it.</p>
+          <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Security ke liye Bot Token/Chat ID/PIN hamesha khaali dikhte hain. Khaali chhodoge to purana saved value SAFE rahega - sirf jo field bharoge wahi update hoga.</p>
           <div class="form-group">
             <label>Telegram Bot Token</label>
             <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF...">
@@ -1123,30 +1134,41 @@ function renderFullAppHTML() {
         return;
       }
 
-      // Season/Movie ke hisaab se group karo - flat list bhi rakho taaki
-      // Next/Prev episode navigation sahi order mein chal sake
+      // Season/Movie ke hisaab se group karo, phir har season ke andar
+      // quality (FHD/HD/SD) ke hisaab se sub-group - flat list bhi rakho
+      // taaki Next/Prev episode navigation sahi order mein chal sake
       currentEpisodeList = epData.episodes;
-      const groups = {};
-      const groupOrder = [];
+      const QUALITY_ORDER = ["FHD", "HD", "SD"];
+      const seasonGroups = {};
+      const seasonOrder = [];
       epData.episodes.forEach(e => {
         const key = e.season && e.season.trim() ? e.season.trim() : '__none__';
-        if (!groups[key]) { groups[key] = []; groupOrder.push(key); }
-        groups[key].push(e);
+        if (!seasonGroups[key]) { seasonGroups[key] = {}; seasonOrder.push(key); }
+        const q = e.quality || 'HD';
+        if (!seasonGroups[key][q]) seasonGroups[key][q] = [];
+        seasonGroups[key][q].push(e);
       });
 
       let html = '<h4>Episodes List</h4>';
-      groupOrder.forEach(key => {
-        if (key !== '__none__') {
-          html += \`<div style="margin:10px 0 4px; font-weight:800; color:var(--primary); font-size:12px;"><i class="fa-solid fa-layer-group"></i> \${key}</div>\`;
+      seasonOrder.forEach(seasonKey => {
+        if (seasonKey !== '__none__') {
+          html += \`<div style="margin:14px 0 6px; font-weight:800; color:var(--primary); font-size:13px;"><i class="fa-solid fa-layer-group"></i> Season \${seasonKey}</div>\`;
         }
-        html += '<div style="margin-bottom:6px;">' + groups[key].map(e => \`
-          <button class="ep-btn" data-epid="\${e.id}" onclick="playStream('\${e.play_link}', '\${e.id}')">
-            Ep \${e.label} [\${e.quality}]
-          </button>
-          <button class="ep-btn" style="background:#00b359;" onclick="downloadEp('\${e.id}')">
-            <i class="fa-solid fa-download"></i>
-          </button>
-        \`).join('') + '</div>';
+        const qualsPresent = Object.keys(seasonGroups[seasonKey]);
+        const orderedQuals = QUALITY_ORDER.filter(q => qualsPresent.includes(q))
+          .concat(qualsPresent.filter(q => !QUALITY_ORDER.includes(q)));
+
+        orderedQuals.forEach(q => {
+          html += \`<div style="margin:8px 0 4px; font-weight:700; color:var(--accent); font-size:11px; letter-spacing:1px;">\${q}</div>\`;
+          html += '<div style="margin-bottom:4px;">' + seasonGroups[seasonKey][q].map(e => \`
+            <button class="ep-btn" data-epid="\${e.id}" onclick="playStream('\${e.play_link}', '\${e.id}')">
+              EP\${e.label}
+            </button>
+            <button class="ep-btn" style="background:#00b359;" onclick="downloadEp('\${e.id}')">
+              <i class="fa-solid fa-download"></i>
+            </button>
+          \`).join('') + '</div>';
+        });
       });
       list.innerHTML = html;
 
@@ -1168,12 +1190,25 @@ function renderFullAppHTML() {
       const box = document.getElementById('playerBox');
       if (url) {
         box.style.display = 'block';
-        box.innerHTML = \`<iframe src="\${url}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe>\`;
+        // FIX: puri innerHTML replace mat karo - warna player ke andar wala
+        // ⋮ menu button bhi mit jaata hai. Sirf purana iframe hatao, naya add karo.
+        const oldFrame = box.querySelector('iframe');
+        if (oldFrame) oldFrame.remove();
+        const iframe = document.createElement('iframe');
+        iframe.src = url;
+        iframe.setAttribute('allowfullscreen', '');
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation');
+        box.appendChild(iframe);
+        document.getElementById('playerMenuBtn').style.display = 'flex';
         document.getElementById('playerControls').style.display = 'flex';
         box.scrollIntoView({ behavior: 'smooth' });
       }
       currentEpIndex = currentEpisodeList.findIndex(e => e.id === epId);
       highlightActiveEpisode(epId);
+    }
+
+    function togglePlayerMenu() {
+      document.getElementById('playerMenu').classList.toggle('open');
     }
 
     function prevEp() {
@@ -1233,9 +1268,14 @@ function renderFullAppHTML() {
     function goHome() {
       document.getElementById('catalogView').style.display = 'block';
       document.getElementById('detailView').classList.remove('active');
-      document.getElementById('playerBox').innerHTML = '';
-      document.getElementById('playerBox').style.display = 'none';
-      
+      const box = document.getElementById('playerBox');
+      const oldFrame = box.querySelector('iframe');
+      if (oldFrame) oldFrame.remove();
+      box.classList.remove('theater', 'floating-pip');
+      box.style.display = 'none';
+      document.getElementById('playerMenuBtn').style.display = 'none';
+      document.getElementById('playerMenu').classList.remove('open');
+
       document.getElementById('catChips').style.display = 'flex';
       if(currentCategory !== 'ALL') {
           document.getElementById('genreChips').style.display = 'flex';
@@ -1292,11 +1332,19 @@ function renderFullAppHTML() {
     function openAdmin() { document.getElementById('adminModal').style.display = 'flex'; }
     function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
-    function verifyAdmin() {
+    async function verifyAdmin() {
       const pin = document.getElementById('adminPinInp').value;
       if(!pin) return alert('Enter PIN!');
-      sessionPin = pin; // Save PIN
-      
+
+      // FIX: Pehle backend se PIN ko actually verify karo - pehle koi bhi
+      // password se panel khul jaata tha, ab galat PIN par turant reject hoga
+      sessionPin = pin;
+      const checkRes = await fetch('/api/admin/vip', { headers: { 'X-Admin-Pin': sessionPin } });
+      if (!checkRes.ok) {
+        sessionPin = "";
+        return alert('❌ Galat PIN! Dobara try karo.');
+      }
+
       document.getElementById('adminLock').style.display = 'none';
       document.getElementById('adminBody').style.display = 'block';
       loadAdminDataUI();
@@ -1414,6 +1462,7 @@ function renderFullAppHTML() {
       shorteners.push({domain, api_key});
       const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ shorteners }) });
       if(res.ok) { document.getElementById('cfgShDom').value = ''; document.getElementById('cfgShKey').value = ''; showToast('Shortener Added!'); await loadData(); loadAdminDataUI(); }
+      else alert("Save fail ho gaya - Auth failed");
     }
 
     async function deleteShortener(index) {
@@ -1422,6 +1471,7 @@ function renderFullAppHTML() {
       shorteners.splice(index, 1);
       const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ shorteners }) });
       if(res.ok) { showToast('Shortener Deleted!'); await loadData(); loadAdminDataUI(); }
+      else alert("Auth failed");
     }
 
     async function addPaidRequest() {
@@ -1432,6 +1482,7 @@ function renderFullAppHTML() {
       paid_requests.push({password, original_link});
       const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests }) });
       if(res.ok) { document.getElementById('paidPass').value = ''; document.getElementById('paidUrl').value = ''; showToast('Key Added!'); await loadData(); loadAdminDataUI(); }
+      else alert("Save fail ho gaya - Auth failed");
     }
 
     async function deletePaidKey(index) {
@@ -1440,6 +1491,7 @@ function renderFullAppHTML() {
       paid_requests.splice(index, 1);
       const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests }) });
       if(res.ok) { showToast('Key Deleted!'); await loadData(); loadAdminDataUI(); }
+      else alert("Auth failed");
     }
 
     async function saveSettings() {
@@ -1447,12 +1499,22 @@ function renderFullAppHTML() {
       const admin_pin = document.getElementById('cfgPin').value.trim();
       const bot_token = document.getElementById('cfgBotToken').value.trim();
       const chat_id = document.getElementById('cfgChatId').value.trim();
-      
+
+      // FIX: In fields ko hamesha khaali dikhaya jaata hai (security ke liye),
+      // isliye khaali chhodne ka matlab "isko mat badlo" hona chahiye, "isko
+      // delete kar do" nahi - warna sirf ek field update karne par baaki
+      // (Bot Token, PIN waghera) khud-b-khud gayab ho jaate the.
+      const settings = { channel_link };
+      if (admin_pin) settings.admin_pin = admin_pin;
+      if (bot_token) settings.bot_token = bot_token;
+      if (chat_id) settings.chat_id = chat_id;
+
       const res = await adminFetch('/api/settings', {
         method: 'POST',
-        body: JSON.stringify({ settings: { channel_link, admin_pin, bot_token, chat_id } })
+        body: JSON.stringify({ settings })
       });
       if(res.ok) { showToast('Settings Saved!'); await loadData(); loadAdminDataUI(); }
+      else { alert('Save fail ho gaya - PIN check karo'); }
     }
 
     // ==========================================
@@ -1576,4 +1638,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-    }
+  }
