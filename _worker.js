@@ -52,18 +52,26 @@ export default {
 
     // Telegram Bot Notification Helper Function
     const sendTelegramNotification = async (settings, text, photoUrl = null) => {
-      if (!settings.bot_token || !settings.chat_id) return;
+      if (!settings.bot_token || !settings.chat_id) {
+        console.log("⚠️ Telegram not sent: bot_token/chat_id missing in settings");
+        return;
+      }
       try {
         const tgForm = new FormData();
         tgForm.append("chat_id", settings.chat_id);
         tgForm.append("parse_mode", "HTML");
+        let res;
         if (photoUrl && photoUrl.startsWith("http")) {
           tgForm.append("photo", photoUrl);
           tgForm.append("caption", text);
-          await fetch(`https://api.telegram.org/bot${settings.bot_token}/sendPhoto`, { method: "POST", body: tgForm });
+          res = await fetch(`https://api.telegram.org/bot${settings.bot_token}/sendPhoto`, { method: "POST", body: tgForm });
         } else {
           tgForm.append("text", text);
-          await fetch(`https://api.telegram.org/bot${settings.bot_token}/sendMessage`, { method: "POST", body: tgForm });
+          res = await fetch(`https://api.telegram.org/bot${settings.bot_token}/sendMessage`, { method: "POST", body: tgForm });
+        }
+        if (!res.ok) {
+          const errBody = await res.text();
+          console.error("❌ Telegram send FAIL:", res.status, errBody);
         }
       } catch (err) { console.log("Telegram Error", err); }
     };
@@ -333,7 +341,6 @@ export default {
         image_url: body.image_url || "",
         category: body.category || "Uncategorized",
         genres: body.genres || "",
-        season: body.season || "",
         story: body.story || "",
         release: body.release || "",
         updatedAt: Date.now()
@@ -344,7 +351,11 @@ export default {
 
       const settings = (await kvGet("settings", {})) || {};
       let hashGenres = newPost.genres.split(/[\s,]+/).filter(g=>g).map(g => '#' + g).join(' ');
-      const tgMsg = `Name: <b>${newPost.name}</b> ❞\n\nCategory:\n<b>${newPost.category}</b> ❞\n\nGenre: ${hashGenres}\nSeason: ${newPost.season || '01'}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${newPost.story}`;
+      // Telegram HTML parse_mode ke liye special characters escape karna zaroori hai,
+      // warna agar name/story mein <, >, ya & aa jaaye to Telegram poori caption
+      // hi reject kar deta hai (sirf photo jaati hai, details gayab ho jaati hain)
+      const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const tgMsg = `Name: <b>${escHtml(newPost.name)}</b> ❞\n\nCategory:\n<b>${escHtml(newPost.category)}</b> ❞\n\nGenre: ${escHtml(hashGenres)}\nRelease: ${escHtml(newPost.release || '-')}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${escHtml(newPost.story)}`;
       ctx.waitUntil(sendTelegramNotification(settings, tgMsg, newPost.image_url));
 
       return json({ success: true, post: newPost });
@@ -373,6 +384,7 @@ export default {
       const newEp = {
         id: body.id || "ep_" + Date.now(),
         post_id: body.post_id,
+        season: body.season || "",
         label: body.label || "01",
         quality: body.quality || "HD (720p)",
         play_link: body.play_link || "",
@@ -448,18 +460,51 @@ export default {
       }
       if (activeShorteners.length > 0) {
         const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
-        try { 
-          const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, ""); 
-          const apiEndpoint = `https://${domain}/api?api=${activeSh.api_key}&url=${encodeURIComponent(targetUrl)}&format=text`; 
-          const res = await fetch(apiEndpoint); 
-          const shortLink = (await res.text()).trim(); 
-          if (shortLink.startsWith("http")) return json({ direct: false, url: shortLink }); 
-          
-          const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiEndpoint)}`); 
-          const proxyData = await proxyRes.json(); 
-          if (proxyData.contents && proxyData.contents.trim().startsWith("http")) { 
-            return json({ direct: false, url: proxyData.contents.trim() }); 
-          } 
+
+        // Kai shortener services JSON return karte hain (jaise
+        // {"status":"success","shortenedUrl":"https://..."}), sirf plain
+        // text nahi - dono format handle karo.
+        const extractShortUrl = (raw) => {
+          const trimmed = raw.trim();
+          if (trimmed.startsWith("http")) return trimmed;
+          try {
+            const j = JSON.parse(trimmed);
+            const candidate = j.shortenedUrl || j.short_url || j.shortUrl || j.url || j.data || j.result;
+            if (typeof candidate === "string" && candidate.startsWith("http")) return candidate;
+          } catch (_e) { /* not JSON, ignore */ }
+          return null;
+        };
+
+        try {
+          const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
+          const encodedUrl = encodeURIComponent(targetUrl);
+
+          // Attempt 1: standard AdLinkFly-style with format=text (GPLinks, AdrinoLinks, etc.)
+          const attempts = [
+            `https://${domain}/api?api=${activeSh.api_key}&url=${encodedUrl}&format=text`,
+            // Attempt 2: kuch shorteners format=text param se error dete hain, bina uske JSON deta hai
+            `https://${domain}/api?api=${activeSh.api_key}&url=${encodedUrl}`,
+          ];
+
+          let shortLink = null;
+          let lastRaw = "";
+          for (const apiEndpoint of attempts) {
+            try {
+              const res = await fetch(apiEndpoint);
+              const rawBody = await res.text();
+              lastRaw = rawBody;
+              shortLink = extractShortUrl(rawBody);
+              if (shortLink) break;
+            } catch (_e) { /* try next attempt */ }
+          }
+          if (shortLink) return json({ direct: false, url: shortLink });
+          console.log("⚠️ Shortener direct calls didn't return a usable link. Raw response:", lastRaw.slice(0, 300));
+
+          const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(attempts[0])}`);
+          const proxyData = await proxyRes.json();
+          const proxyShortLink = proxyData.contents ? extractShortUrl(proxyData.contents) : null;
+          if (proxyShortLink) return json({ direct: false, url: proxyShortLink });
+          console.log("⚠️ Shortener proxy call also failed. Raw contents:", (proxyData.contents || "").slice(0, 300));
         } catch (err) { console.error("Shortener failed", err); }
       }
       
@@ -646,6 +691,7 @@ function renderFullAppHTML() {
     .player-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 10px; display: none; transition:0.3s; }
     .player-box.theater { aspect-ratio: 16/10; max-height: 70vh; }
     .player-box.full { position: fixed; inset: 0; z-index: 9999; aspect-ratio: auto; width: 100vw; height: 100vh; border-radius: 0; }
+    .player-box.floating-pip { position: fixed; bottom: 80px; right: 12px; width: 200px; aspect-ratio: 16/9; z-index: 500; box-shadow: 0 6px 24px rgba(0,0,0,0.7); border-radius: 8px; }
     .player-box iframe { width: 100%; height: 100%; border: none; }
     .player-controls { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; scrollbar-width: none; }
     .player-controls::-webkit-scrollbar { display: none; }
@@ -776,10 +822,6 @@ function renderFullAppHTML() {
             <input type="text" id="pGenre" class="form-control" placeholder="Action Fantasy Shounen">
           </div>
           <div class="form-group">
-            <label>Season (e.g. Season 01)</label>
-            <input type="text" id="pSeason" class="form-control" placeholder="Season 1">
-          </div>
-          <div class="form-group">
             <label>Release Year</label>
             <input type="text" id="pRelease" class="form-control" placeholder="2025">
           </div>
@@ -794,6 +836,10 @@ function renderFullAppHTML() {
           <div class="form-group">
             <label>Target Anime Post</label>
             <select id="epPostSelect" class="form-control" onchange="loadAdminEpisodes()"></select>
+          </div>
+          <div class="form-group">
+            <label>Season Number (anime ke liye) ya Movie Name (movie/OVA ke liye)</label>
+            <input type="text" id="epSeason" class="form-control" placeholder="e.g. 01  ya  Demon Slayer: Mugen Train">
           </div>
           <div class="form-group">
             <label>Episode Label</label>
@@ -1062,7 +1108,7 @@ function renderFullAppHTML() {
           <h2>\${currentPost.name}</h2>
           <p><strong>Category:</strong> \${currentPost.category}</p>
           <p><strong>Genre:</strong> \${currentPost.genres || 'N/A'}</p>
-          <p><strong>Season / Year:</strong> \${currentPost.season || ''} (\${currentPost.release || '2025'})</p>
+          <p><strong>Release:</strong> \${currentPost.release || '2025'}</p>
           <p><strong>Story:</strong> \${currentPost.story || 'N/A'}</p>
         </div>
       \`;
@@ -1073,21 +1119,49 @@ function renderFullAppHTML() {
 
       if (!epData.episodes || epData.episodes.length === 0) {
         list.innerHTML = '<h4>Episodes</h4><p style="color:var(--text-muted); font-size:12px;">No episodes uploaded yet.</p>';
+        currentEpisodeList = [];
         return;
       }
 
-      list.innerHTML = '<h4>Episodes List</h4><div style="margin-top:8px;">' + epData.episodes.map((e, idx) => \`
-        <button class="ep-btn \${idx === 0 ? 'active' : ''}" onclick="playStream('\${e.play_link}', '\${e.id}')">
-          Ep \${e.label} [\${e.quality}]
-        </button>
-        <button class="ep-btn" style="background:#00b359;" onclick="downloadEp('\${e.id}')">
-          <i class="fa-solid fa-download"></i>
-        </button>
-      \`).join('') + '</div>';
+      // Season/Movie ke hisaab se group karo - flat list bhi rakho taaki
+      // Next/Prev episode navigation sahi order mein chal sake
+      currentEpisodeList = epData.episodes;
+      const groups = {};
+      const groupOrder = [];
+      epData.episodes.forEach(e => {
+        const key = e.season && e.season.trim() ? e.season.trim() : '__none__';
+        if (!groups[key]) { groups[key] = []; groupOrder.push(key); }
+        groups[key].push(e);
+      });
+
+      let html = '<h4>Episodes List</h4>';
+      groupOrder.forEach(key => {
+        if (key !== '__none__') {
+          html += \`<div style="margin:10px 0 4px; font-weight:800; color:var(--primary); font-size:12px;"><i class="fa-solid fa-layer-group"></i> \${key}</div>\`;
+        }
+        html += '<div style="margin-bottom:6px;">' + groups[key].map(e => \`
+          <button class="ep-btn" data-epid="\${e.id}" onclick="playStream('\${e.play_link}', '\${e.id}')">
+            Ep \${e.label} [\${e.quality}]
+          </button>
+          <button class="ep-btn" style="background:#00b359;" onclick="downloadEp('\${e.id}')">
+            <i class="fa-solid fa-download"></i>
+          </button>
+        \`).join('') + '</div>';
+      });
+      list.innerHTML = html;
 
       if (epData.episodes[0].play_link) {
         playStream(epData.episodes[0].play_link, epData.episodes[0].id);
       }
+    }
+
+    let currentEpisodeList = [];
+    let currentEpIndex = -1;
+
+    function highlightActiveEpisode(epId) {
+      document.querySelectorAll('#epListContainer .ep-btn').forEach(b => b.classList.remove('active'));
+      const btn = document.querySelector(\`#epListContainer .ep-btn[data-epid="\${epId}"]\`);
+      if (btn) btn.classList.add('active');
     }
 
     function playStream(url, epId) {
@@ -1095,7 +1169,52 @@ function renderFullAppHTML() {
       if (url) {
         box.style.display = 'block';
         box.innerHTML = \`<iframe src="\${url}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe>\`;
+        document.getElementById('playerControls').style.display = 'flex';
         box.scrollIntoView({ behavior: 'smooth' });
+      }
+      currentEpIndex = currentEpisodeList.findIndex(e => e.id === epId);
+      highlightActiveEpisode(epId);
+    }
+
+    function prevEp() {
+      if (currentEpIndex > 0) {
+        const e = currentEpisodeList[currentEpIndex - 1];
+        playStream(e.play_link, e.id);
+      } else {
+        showToast('Ye pehla episode hai');
+      }
+    }
+
+    function nextEp() {
+      if (currentEpIndex !== -1 && currentEpIndex < currentEpisodeList.length - 1) {
+        const e = currentEpisodeList[currentEpIndex + 1];
+        playStream(e.play_link, e.id);
+      } else {
+        showToast('Ye last episode hai');
+      }
+    }
+
+    function toggleTheater() {
+      document.getElementById('playerBox').classList.toggle('theater');
+    }
+
+    function togglePiP() {
+      // Iframe embeds (Streamwish/Filemoon) par browser ki native Picture-in-Picture
+      // API kaam nahi karti (wo sirf <video> tag par chalti hai) - isliye ek
+      // floating mini-player mode use kiya hai jo scroll karte waqt bhi dikhta rahega
+      const box = document.getElementById('playerBox');
+      box.classList.toggle('floating-pip');
+      if (box.classList.contains('floating-pip')) {
+        showToast('Mini Player ON - scroll karte waqt bhi video dikhega');
+      }
+    }
+
+    function toggleFullscreen() {
+      const box = document.getElementById('playerBox');
+      if (!document.fullscreenElement) {
+        (box.requestFullscreen || box.webkitRequestFullscreen || box.msRequestFullscreen || function(){}).call(box);
+      } else {
+        (document.exitFullscreen || function(){}).call(document);
       }
     }
 
@@ -1124,35 +1243,48 @@ function renderFullAppHTML() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
+    // Field ke naam aur unke alternate naam (aliases) - lambe wale pehle
+    // taaki "short story" ko "story" se pehle match kiya jaaye
+    const AUTODETECT_ALIASES = [
+      ["short story", "story"], ["synopsis", "story"], ["description", "story"], ["desc", "story"], ["story", "story"],
+      ["name", "name"], ["title", "name"], ["naam", "name"],
+      ["category", "category"], ["cat", "category"],
+      ["release date", "release"], ["release", "release"], ["date", "release"], ["year", "release"],
+      ["genres", "genres"], ["genre", "genres"],
+    ];
+
     function handleAutoDetect() {
       const text = document.getElementById("autoDetectInp").value.trim();
       if (!text) return;
 
       const lines = text.split('\\n');
-      let currentKey = null;
-      let parsed = { name: "", category: "", release: "", genres: "", season: "", story: "" };
+      let currentField = null;
+      let parsed = { name: "", category: "", release: "", genres: "", story: "" };
+      // Separator ": - = _ , ." mein se koi bhi ho sakta hai, ek ya zyada baar,
+      // aage-peeche space ke saath ya bina space ke bhi
+      const SEP = "\\\\s*[-:=_,.]+\\\\s*";
 
       lines.forEach(line => {
-        const match = line.match(/^\\s*(name|title|naam|category|cat|date|release|year|genre|genres|season|story|synopsis|desc)\\s*:\\s*(.*)/i);
-        if (match) {
-          const key = match[1].toLowerCase();
-          const val = match[2].trim();
-          if (['name','title','naam'].includes(key)) currentKey = 'name';
-          else if (['category','cat'].includes(key)) currentKey = 'category';
-          else if (['date','release','year'].includes(key)) currentKey = 'release';
-          else if (['genre','genres'].includes(key)) currentKey = 'genres';
-          else if (key === 'season') currentKey = 'season';
-          else if (['story','synopsis','desc'].includes(key)) currentKey = 'story';
-          if (currentKey) parsed[currentKey] = val;
-        } else if (currentKey) {
-          parsed[currentKey] += "\\n" + line.trim();
+        let matched = false;
+        for (const [alias, field] of AUTODETECT_ALIASES) {
+          const aliasPattern = alias.replace(/ /g, "\\\\s+");
+          const re = new RegExp("^\\\\s*" + aliasPattern + SEP + "(.*)", "i");
+          const m = line.match(re);
+          if (m) {
+            currentField = field;
+            parsed[field] = (parsed[field] ? parsed[field] + "\\n" : "") + m[1].trim();
+            matched = true;
+            break;
+          }
+        }
+        if (!matched && currentField && line.trim()) {
+          parsed[currentField] += "\\n" + line.trim();
         }
       });
 
       if (parsed.name) document.getElementById("pName").value = parsed.name.trim();
       if (parsed.category) document.getElementById("pCategory").value = parsed.category.trim();
       if (parsed.genres) document.getElementById("pGenre").value = parsed.genres.trim();
-      if (parsed.season) document.getElementById("pSeason").value = parsed.season.trim();
       if (parsed.release) document.getElementById("pRelease").value = parsed.release.trim();
       if (parsed.story) document.getElementById("pStory").value = parsed.story.trim();
     }
@@ -1245,7 +1377,7 @@ function renderFullAppHTML() {
       // FIX: Episode list with Delete buttons properly displayed
       epList.innerHTML = data.episodes.map(e => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
-          <span style="font-size:12px; color:#fff; word-break:break-all;">Ep \${e.label} - \${e.quality}</span>
+          <span style="font-size:12px; color:#fff; word-break:break-all;">\${e.season ? '[' + e.season + '] ' : ''}Ep \${e.label} - \${e.quality}</span>
           <button style="background:#ff4d4d; color:#fff; border:none; padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer;" onclick="deleteEpisode('\${e.id}', '\${postId}')">Delete</button>
         </div>
       \`).join('');
@@ -1349,7 +1481,6 @@ function renderFullAppHTML() {
       const image_url = document.getElementById('pImgUrl').value.trim();
       const category = document.getElementById('pCategory').value.trim();
       const genres = document.getElementById('pGenre').value.trim();
-      const season = document.getElementById('pSeason').value.trim();
       const release = document.getElementById('pRelease').value.trim();
       const story = document.getElementById('pStory').value.trim();
 
@@ -1357,7 +1488,7 @@ function renderFullAppHTML() {
 
       const res = await adminFetch('/api/posts', {
         method: 'POST',
-        body: JSON.stringify({ name, image_url, category, genres, season, release, story })
+        body: JSON.stringify({ name, image_url, category, genres, release, story })
       });
       if(res.ok) {
           showToast('Post Published & Sent to Telegram!');
@@ -1369,6 +1500,7 @@ function renderFullAppHTML() {
 
     async function saveEpisode() {
       const post_id = document.getElementById('epPostSelect').value;
+      const season = document.getElementById('epSeason').value.trim();
       const label = document.getElementById('epNum').value.trim();
       const quality = document.getElementById('epQuality').value;
       const play_link = document.getElementById('epPlayLink').value.trim();
@@ -1378,7 +1510,7 @@ function renderFullAppHTML() {
 
       const res = await adminFetch('/api/episodes', {
         method: 'POST',
-        body: JSON.stringify({ post_id, label, quality, play_link, download_link })
+        body: JSON.stringify({ post_id, season, label, quality, play_link, download_link })
       });
       if(res.ok) {
           showToast('Episode Attached!');
@@ -1444,4 +1576,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-            }
+    }
