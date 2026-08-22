@@ -350,7 +350,10 @@ export default {
       await kvSet("posts", posts);
 
       const settings = (await kvGet("settings", {})) || {};
-      let hashGenres = newPost.genres.split(/[\s,]+/).filter(g=>g).map(g => '#' + g).join(' ');
+      // Genres comma/dot se separate hote hain, space se nahi (multi-word
+      // genre jaise "Dark Fantasy" ko todna nahi hai) - hashtag ke liye
+      // internal space bhi hata do (Telegram hashtags mein space nahi chalta)
+      let hashGenres = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
       // Telegram HTML parse_mode ke liye special characters escape karna zaroori hai,
       // warna agar name/story mein <, >, ya & aa jaaye to Telegram poori caption
       // hi reject kar deta hai (sirf photo jaati hai, details gayab ho jaati hain)
@@ -786,6 +789,15 @@ function renderFullAppHTML() {
   </div>
 
   <!-- ADMIN CONTROL CENTER MODAL -->
+  <!-- GLOBAL GENRES MODAL -->
+  <div class="modal-overlay" id="genreModal">
+    <div class="modal-card">
+      <span onclick="closeModal('genreModal')" style="position:absolute; right:15px; top:12px; cursor:pointer; font-size:18px;">✕</span>
+      <h3><i class="fa-solid fa-masks-theater"></i> Browse by Genre</h3>
+      <div id="genreModalList" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="adminModal">
     <div class="modal-card">
       <span onclick="closeModal('adminModal')" style="position:absolute; right:15px; top:12px; cursor:pointer; font-size:18px;">✕</span>
@@ -829,8 +841,8 @@ function renderFullAppHTML() {
             <input type="text" id="pCategory" class="form-control" placeholder="e.g. Hindi Subbed Anime" required>
           </div>
           <div class="form-group">
-            <label>Genres (Separated by space)</label>
-            <input type="text" id="pGenre" class="form-control" placeholder="Action Fantasy Shounen">
+            <label>Genres (comma se separate karo)</label>
+            <input type="text" id="pGenre" class="form-control" placeholder="Action, Dark Fantasy, Adventure">
           </div>
           <div class="form-group">
             <label>Release Year</label>
@@ -922,22 +934,34 @@ function renderFullAppHTML() {
         </div>
 
         <div id="tabCfg" style="display:none;">
-          <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Security ke liye Bot Token/Chat ID/PIN hamesha khaali dikhte hain. Khaali chhodoge to purana saved value SAFE rahega - sirf jo field bharoge wahi update hoga.</p>
+          <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Security ke liye Bot Token/Chat ID/PIN hamesha khaali dikhte hain. Khaali chhodkar Save karoge to purana saved value SAFE rahega. Purana value hatana hai to "Clear" button dabao.</p>
           <div class="form-group">
             <label>Telegram Bot Token</label>
-            <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF...">
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="cfgBotToken" class="form-control" placeholder="123456:ABC-DEF...">
+              <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('bot_token')">🗑 Clear</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Telegram Private Channel ID</label>
-            <input type="text" id="cfgChatId" class="form-control" placeholder="-100xxxxxxxxxx">
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="cfgChatId" class="form-control" placeholder="-100xxxxxxxxxx">
+              <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('chat_id')">🗑 Clear</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Telegram Public Link</label>
-            <input type="text" id="cfgTg" class="form-control" placeholder="https://t.me/yourchannel">
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="cfgTg" class="form-control" placeholder="https://t.me/yourchannel">
+              <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('channel_link')">🗑 Clear</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Admin Access PIN</label>
-            <input type="text" id="cfgPin" class="form-control" placeholder="admin123">
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="cfgPin" class="form-control" placeholder="admin123">
+              <button type="button" class="pctrl-btn" style="flex:0 0 auto;" onclick="clearSettingField('admin_pin')">🗑 Reset to default</button>
+            </div>
           </div>
           <button class="btn-action" onclick="saveSettings()">Save Global Config</button>
         </div>
@@ -987,10 +1011,20 @@ function renderFullAppHTML() {
     }
 
     // Dynamic Category -> Genre Logic
+    // Genres comma ya dot se separate hote hain (space se NAHI, kyunki genre
+    // khud multi-word ho sakta hai jaise "Dark Fantasy") - is function ko
+    // har jagah use karo taaki "Action, Dark Fantasy, Adventure" sahi se
+    // ["Action", "Dark Fantasy", "Adventure"] bane, "Dark"+"Fantasy" alag na ho
+    function parseGenreList(genresStr) {
+      if (!genresStr) return [];
+      return genresStr.split(/[,.]+/).map(g => g.trim()).filter(Boolean);
+    }
+
     function renderCatFilters(posts) {
       const cats = [...new Set(posts.map(p => p.category).filter(Boolean))];
       const bar = document.getElementById('catChips');
-      bar.innerHTML = \`<div class="chip active" onclick="filterByCat('ALL')">All Categories</div>\` + 
+      bar.innerHTML = \`<div class="chip" style="background:var(--accent); color:#000; border-color:var(--accent);" onclick="openGenreModal()"><i class="fa-solid fa-masks-theater"></i> Genres</div>\` +
+        \`<div class="chip active" onclick="filterByCat('ALL')">All Categories</div>\` + 
         cats.map(c => \`<div class="chip" onclick="filterByCat('\${c}')">\${c}</div>\`).join('');
       renderGenreFilters(posts);
     }
@@ -1016,11 +1050,7 @@ function renderFullAppHTML() {
       
       const catPosts = posts.filter(p => p.category === currentCategory);
       const gSet = new Set();
-      catPosts.forEach(p => {
-        if (p.genres) p.genres.split(/[\\s,;]+/).forEach(g => {
-          if(g.trim()) gSet.add(g.trim());
-        });
-      });
+      catPosts.forEach(p => parseGenreList(p.genres).forEach(g => gSet.add(g)));
       
       const genres = Array.from(gSet);
       if (genres.length === 0) {
@@ -1041,6 +1071,31 @@ function renderFullAppHTML() {
       applyFilters();
     }
 
+    // GLOBAL GENRES: category se bilkul alag, saare posts mein se sabhi
+    // genres dikhata hai, ek genre chuno to us genre wale saare posts
+    // dikhte hain chahe wo kisi bhi category ke ho
+    function openGenreModal() {
+      const gSet = new Set();
+      appData.posts.forEach(p => parseGenreList(p.genres).forEach(g => gSet.add(g)));
+      const list = document.getElementById('genreModalList');
+      const genres = Array.from(gSet).sort();
+      if (genres.length === 0) {
+        list.innerHTML = '<p style="color:var(--text-muted); font-size:12px;">Abhi koi genre nahi mila.</p>';
+      } else {
+        list.innerHTML = genres.map(g => \`<div class="chip" onclick="selectGlobalGenre('\${g}')" style="margin:4px;">\${g}</div>\`).join('');
+      }
+      document.getElementById('genreModal').style.display = 'flex';
+    }
+
+    function selectGlobalGenre(g) {
+      closeModal('genreModal');
+      currentCategory = 'ALL';
+      currentGenre = g;
+      renderCatFilters(appData.posts); // category chips ko 'All Categories' active dikhao
+      document.getElementById('gridTitle').innerText = '🎭 Genre: ' + g;
+      applyFilters();
+    }
+
     // FIX: Search System problem solved
     function applyFilters() {
       let filtered = appData.posts;
@@ -1055,7 +1110,7 @@ function renderFullAppHTML() {
             filtered = filtered.filter(p => p.category === currentCategory);
           }
           if (currentGenre !== 'ALL') {
-            filtered = filtered.filter(p => p.genres && p.genres.includes(currentGenre));
+            filtered = filtered.filter(p => parseGenreList(p.genres).includes(currentGenre));
           }
           if (q) {
             filtered = filtered.filter(p => 
@@ -1492,6 +1547,26 @@ function renderFullAppHTML() {
       const res = await adminFetch('/api/settings', { method: 'POST', body: JSON.stringify({ paid_requests }) });
       if(res.ok) { showToast('Key Deleted!'); await loadData(); loadAdminDataUI(); }
       else alert("Auth failed");
+    }
+
+    // Ek specific saved field ko explicitly clear/delete karta hai (baaki
+    // fields ko haath nahi lagata) - normal Save khaali field ko ignore
+    // karta hai (data-loss se bachne ke liye), isliye purana value delete
+    // karne ka alag, explicit tareeka chahiye
+    async function clearSettingField(key) {
+      if (!confirm('Ye saved value delete kar do?')) return;
+      const res = await adminFetch('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify({ settings: { [key]: "" } })
+      });
+      if (res.ok) {
+        showToast('Cleared!');
+        const fieldMap = { bot_token: 'cfgBotToken', chat_id: 'cfgChatId', channel_link: 'cfgTg', admin_pin: 'cfgPin' };
+        if (fieldMap[key]) document.getElementById(fieldMap[key]).value = '';
+        await loadData();
+      } else {
+        alert('Clear fail ho gaya - Auth failed');
+      }
     }
 
     async function saveSettings() {
