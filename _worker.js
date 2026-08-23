@@ -3,7 +3,7 @@
  * SINGLE SITE + APK EDITION - 1 SITE ONLY - 44/45 READY - ORIGINAL STRUCTURE PRESERVED
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Category->Genre Filtering, Bot Notifications & Auto VIP Deletion.
- * FULLY FIXED: Deletions, Shorteners, Settings Clearing, Episodes, SEO, and Security.
+ * FULLY FIXED: Deletions, Shorteners, Settings Clearing, Episodes, SEO, Security, & Telegram Single Post.
  */
 
 export default {
@@ -50,7 +50,7 @@ export default {
       }
     })());
 
-    // Telegram Bot Notification Helper Function
+    // Telegram Bot Notification Helper Function (For URL mode)
     const sendTelegramNotification = async (settings, text, photoUrl = null) => {
       if (!settings.bot_token || !settings.chat_id) {
         console.log("⚠️ Telegram not sent: bot_token/chat_id missing in settings");
@@ -344,6 +344,7 @@ export default {
       let file = null;
       const contentType = request.headers.get("content-type") || "";
       
+      // FIX: Upload image & Details single send logic
       if (contentType.includes("multipart/form-data") || contentType.includes("form-data")) {
         const formData = await request.formData();
         file = formData.get("file");
@@ -362,7 +363,7 @@ export default {
       
       let finalImageUrl = body.image_url || "";
       
-      // If file is present - send ONE message with YOUR original format (like app.py single send)
+      // If file is present - send ONE message with original format
       if (file && file.size > 0) {
         const botToken = settings.bot_token || env.TELEGRAM_BOT_TOKEN;
         const chatId = settings.chat_id || env.TELEGRAM_CHAT_ID;
@@ -370,7 +371,6 @@ export default {
           return json({ error: "Bot Token / Chat ID Settings me set nahi hai" }, 400);
         }
         
-        // YOUR ORIGINAL FORMAT - same as before, no season variable
         let hashGenres = body.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
         const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         const caption = "Name: <b>" + escHtml(body.name) + "</b> ❞\n\nCategory:\n<b>" + escHtml(body.category) + "</b> ❞\n\nGenre: " + escHtml(hashGenres) + "\nRelease: " + escHtml(body.release || '-') + "\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 " + escHtml(body.story);
@@ -408,7 +408,6 @@ export default {
       posts.unshift(newPost);
       await kvSet("posts", posts);
 
-      // If no file (URL case) - use your original separate notification logic
       let telegramResult = { ok: true };
       if (!file) {
         let hashGenres2 = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
@@ -421,7 +420,6 @@ export default {
     }
 
     if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
-
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const id = url.pathname.split("/").pop();
       let posts = (await kvGet("posts", [])) || [];
@@ -466,14 +464,12 @@ export default {
       return json({ success: true });
     }
 
-    // FIX: Get VIP Users for Admin Panel
     if (url.pathname === "/api/admin/vip" && method === "GET") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const users = (await kvGet("premium_users", [])) || [];
       return json({ users });
     }
 
-    // FIX: Delete VIP User from Admin Panel
     if (url.pathname.startsWith("/api/admin/vip/") && method === "DELETE") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const email = decodeURIComponent(url.pathname.split("/").pop());
@@ -483,16 +479,19 @@ export default {
       return json({ success: true });
     }
 
-
+    // FIX: ADVANCED SHORTENER LOGIC WITH USER-AGENT & MULTI-API BYPASS
     if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
       const userKey = url.searchParams.get("key");
       const deviceId = url.searchParams.get("device_id");
+      
       const episodes = (await kvGet(`ep_${postId}`, [])) || []; 
       const ep = episodes.find(e => e.id === epId);
       if (!ep) return json({ error: "Episode not found" }, 404);
       const targetUrl = ep.download_link || ep.play_link; 
       if (!targetUrl) return json({ error: "Empty link" }, 400);
+      
+      // VIP CHECK (Premium = Direct Link)
       let isPremium = false;
       const premiumUsers = (await kvGet("premium_users", [])) || [];
       if (userKey) {
@@ -501,19 +500,26 @@ export default {
           isPremium = true;
           if (deviceId) {
             if (!user.device_id) { user.device_id = deviceId; await kvSet("premium_users", premiumUsers); }
-            else if (user.device_id !== deviceId) isPremium = false;
+            else if (user.device_id !== deviceId) isPremium = false; 
           }
         }
       }
+
       if (isPremium) return json({ direct: true, url: targetUrl, premium: true });
+
+      // FREE USERS (Shortener Logic Fix)
       const shorteners = (await kvGet("shorteners", [])) || [];
       let activeShorteners = shorteners;
       if (activeShorteners.length === 0) {
         const s = (await kvGet("settings", {})) || {};
         if (s.shorteners && s.shorteners.length > 0) activeShorteners = s.shorteners;
       }
+      
+      let debugLogs = [];
+
       if (activeShorteners.length > 0) {
         const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
+
         const extractShortUrl = (raw) => {
           if (!raw) return null;
           const t = raw.trim();
@@ -530,11 +536,13 @@ export default {
           const m = t.match(/https?:\/\/[^\s"']+/);
           return m ? m[0] : null;
         };
+
         try {
           const rawDomain = activeSh.dashboard_url || activeSh.domain || "";
           const domain = rawDomain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "").split("/")[0];
           const apiKey = activeSh.api_key || activeSh.apiKey;
           const enc = encodeURIComponent(targetUrl);
+
           const apiDomain = domain.startsWith("api.") ? domain : "api." + domain;
           const tryDomains = [...new Set([apiDomain, domain])];
           const attempts = [];
@@ -542,27 +550,47 @@ export default {
             attempts.push(`https://${d}/api?api=${apiKey}&url=${enc}&format=text`);
             attempts.push(`https://${d}/api?api=${apiKey}&url=${enc}`);
           });
+
+          const fetchOptions = {
+            method: 'GET',
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*"
+            }
+          };
+
           for (const apiUrl of attempts) {
             try {
-              const r = await fetch(apiUrl);
+              const r = await fetch(apiUrl, fetchOptions);
               const txt = await r.text();
               const shortLink = extractShortUrl(txt);
-              if (shortLink) return json({ direct: false, url: shortLink, shortener: domain });
-            } catch (e) {}
+              if (shortLink) {
+                return json({ direct: false, url: shortLink, shortener: domain });
+              } else {
+                debugLogs.push({ url: apiUrl, response: txt.substring(0, 100) });
+              }
+            } catch (e) {
+              debugLogs.push({ url: apiUrl, error: e.message });
+            }
           }
+          
           try {
             const pr = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(attempts[0])}`);
             const pd = await pr.json();
             const sl = pd.contents ? extractShortUrl(pd.contents) : null;
             if (sl) return json({ direct: false, url: sl, via: "proxy" });
           } catch (e) {}
-        } catch (err) {}
+          
+        } catch (err) {
+          debugLogs.push({ main_error: err.message });
+        }
       }
-      return json({ direct: true, url: targetUrl, fallback: true });
+      
+      // Fallback agar API block kar de
+      return json({ direct: true, url: targetUrl, fallback: true, debug: debugLogs });
     }
 
     if (url.pathname === "/api/decrypt-link") {
-
       const code = url.searchParams.get("code");
       const paidRequests = (await kvGet("paid_requests", [])) || [];
       const item = paidRequests.find(r => r.password === code);
@@ -665,7 +693,6 @@ function renderFullAppHTML() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
-  <!-- FIX: GOOGLE SEO TAGS ADDED -->
   <title>ASI Animes | Watch Hindi Sub & Hindi Dub Anime Online</title>
   <meta name="description" content="Best website to download and watch Hindi dub anime, English sub anime, and latest series for free.">
   <meta name="keywords" content="ASI Animes, AnimeBox, Hindi Dub, Download Anime">
@@ -777,7 +804,6 @@ function renderFullAppHTML() {
 </head>
 <body>
 
-  <!-- FIX: SEO Hidden Headings for Google Ranking -->
   <div style="display:none;">
     <h1>Download Latest Hindi Dub Anime</h1>
     <h2>Watch English Sub Anime in HD</h2>
@@ -789,13 +815,11 @@ function renderFullAppHTML() {
     <div class="brand" onclick="goHome()">ASI Animes</div>
     <div class="search-box">
       <i class="fa-solid fa-magnifying-glass"></i>
-      <!-- FIX: Search box updated logic -->
       <input type="text" id="searchInp" placeholder="Search anime, dramas, movie..." oninput="applyFilters()">
     </div>
     <button class="btn-head" onclick="openAdmin()"><i class="fa-solid fa-gear"></i> Admin</button>
   </header>
 
-  <!-- Category & Genre Dynamics -->
   <div class="filter-chips" id="catChips"></div>
   <div class="filter-chips" id="genreChips" style="display:none; padding-top:10px; border-bottom:1px solid rgba(0,255,102,0.1);"></div>
 
@@ -835,8 +859,6 @@ function renderFullAppHTML() {
     <a id="tgLink" href="#" target="_blank" class="nav-item"><i class="fa-brands fa-telegram"></i>Telegram</a>
   </div>
 
-  <!-- ADMIN CONTROL CENTER MODAL -->
-  <!-- GLOBAL GENRES MODAL -->
   <div class="modal-overlay" id="genreModal">
     <div class="modal-card">
       <span onclick="closeModal('genreModal')" style="position:absolute; right:15px; top:12px; cursor:pointer; font-size:18px;">✕</span>
@@ -955,11 +977,9 @@ function renderFullAppHTML() {
           </div>
           <button class="btn-action" onclick="saveVipUser()">Activate VIP Pass</button>
           
-          <!-- FIX: VIP Deletion List UI -->
           <h4 style="margin-top:15px; color:#ff4d4d;">Delete VIP Users</h4>
           <div id="vipList" style="max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
         </div>
-
         
         <div id="tabDel" style="display:none;">
           <h4 style="color:#ff4d4d; margin-bottom:10px;">Delete Anime Posts</h4>
@@ -1021,7 +1041,7 @@ function renderFullAppHTML() {
     let currentPost = null;
     let currentCategory = 'ALL';
     let currentGenre = 'ALL';
-    let sessionPin = ""; // FIX: Store Admin PIN globally for auth
+    let sessionPin = ""; 
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -1048,7 +1068,6 @@ function renderFullAppHTML() {
       }
     }
 
-    // FIX: Secure Admin Fetch function
     async function adminFetch(url, options = {}) {
       options.headers = {
         'Content-Type': 'application/json',
@@ -1057,11 +1076,6 @@ function renderFullAppHTML() {
       return fetch(url, options);
     }
 
-    // Dynamic Category -> Genre Logic
-    // Genres comma ya dot se separate hote hain (space se NAHI, kyunki genre
-    // khud multi-word ho sakta hai jaise "Dark Fantasy") - is function ko
-    // har jagah use karo taaki "Action, Dark Fantasy, Adventure" sahi se
-    // ["Action", "Dark Fantasy", "Adventure"] bane, "Dark"+"Fantasy" alag na ho
     function parseGenreList(genresStr) {
       if (!genresStr) return [];
       return genresStr.split(/[,.]+/).map(g => g.trim()).filter(Boolean);
@@ -1118,9 +1132,6 @@ function renderFullAppHTML() {
       applyFilters();
     }
 
-    // GLOBAL GENRES: category se bilkul alag, saare posts mein se sabhi
-    // genres dikhata hai, ek genre chuno to us genre wale saare posts
-    // dikhte hain chahe wo kisi bhi category ke ho
     function openGenreModal() {
       const gSet = new Set();
       appData.posts.forEach(p => parseGenreList(p.genres).forEach(g => gSet.add(g)));
@@ -1138,17 +1149,15 @@ function renderFullAppHTML() {
       closeModal('genreModal');
       currentCategory = 'ALL';
       currentGenre = g;
-      renderCatFilters(appData.posts); // category chips ko 'All Categories' active dikhao
+      renderCatFilters(appData.posts); 
       document.getElementById('gridTitle').innerText = '🎭 Genre: ' + g;
       applyFilters();
     }
 
-    // FIX: Search System problem solved
     function applyFilters() {
       let filtered = appData.posts;
       const q = document.getElementById('searchInp').value.toLowerCase().trim();
       
-      // If user types general terms like AnimeBox, show all to avoid blank screen
       if (q === "animebox" || q === "asi anime" || q === "krt anime") {
          filtered = appData.posts;
       } 
@@ -1236,9 +1245,6 @@ function renderFullAppHTML() {
         return;
       }
 
-      // Season/Movie ke hisaab se group karo, phir har season ke andar
-      // quality (FHD/HD/SD) ke hisaab se sub-group - flat list bhi rakho
-      // taaki Next/Prev episode navigation sahi order mein chal sake
       currentEpisodeList = epData.episodes;
       const QUALITY_ORDER = ["FHD", "HD", "SD"];
       const seasonGroups = {};
@@ -1292,8 +1298,6 @@ function renderFullAppHTML() {
       const box = document.getElementById('playerBox');
       if (url) {
         box.style.display = 'block';
-        // FIX: puri innerHTML replace mat karo - warna player ke andar wala
-        // ⋮ menu button bhi mit jaata hai. Sirf purana iframe hatao, naya add karo.
         const oldFrame = box.querySelector('iframe');
         if (oldFrame) oldFrame.remove();
         const iframe = document.createElement('iframe');
@@ -1336,9 +1340,6 @@ function renderFullAppHTML() {
     }
 
     function togglePiP() {
-      // Iframe embeds (Streamwish/Filemoon) par browser ki native Picture-in-Picture
-      // API kaam nahi karti (wo sirf <video> tag par chalti hai) - isliye ek
-      // floating mini-player mode use kiya hai jo scroll karte waqt bhi dikhta rahega
       const box = document.getElementById('playerBox');
       box.classList.toggle('floating-pip');
       if (box.classList.contains('floating-pip')) {
@@ -1385,8 +1386,6 @@ function renderFullAppHTML() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // Field ke naam aur unke alternate naam (aliases) - lambe wale pehle
-    // taaki "short story" ko "story" se pehle match kiya jaaye
     const AUTODETECT_ALIASES = [
       ["short story", "story"], ["synopsis", "story"], ["description", "story"], ["desc", "story"], ["story", "story"],
       ["name", "name"], ["title", "name"], ["naam", "name"],
@@ -1402,8 +1401,6 @@ function renderFullAppHTML() {
       const lines = text.split('\\n');
       let currentField = null;
       let parsed = { name: "", category: "", release: "", genres: "", story: "" };
-      // Separator ": - = _ , ." mein se koi bhi ho sakta hai, ek ya zyada baar,
-      // aage-peeche space ke saath ya bina space ke bhi
       const SEP = "\\\\s*[-:=_,.]+\\\\s*";
 
       lines.forEach(line => {
@@ -1438,8 +1435,6 @@ function renderFullAppHTML() {
       const pin = document.getElementById('adminPinInp').value;
       if(!pin) return alert('Enter PIN!');
 
-      // FIX: Pehle backend se PIN ko actually verify karo - pehle koi bhi
-      // password se panel khul jaata tha, ab galat PIN par turant reject hoga
       sessionPin = pin;
       const checkRes = await fetch('/api/admin/vip', { headers: { 'X-Admin-Pin': sessionPin } });
       if (!checkRes.ok) {
@@ -1460,17 +1455,11 @@ function renderFullAppHTML() {
       const activeEl = document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1));
       if (activeEl) activeEl.style.display = 'block';
     }
-
-    // ==========================================
-    // ADMIN UI POPULATION & DELETION LOGIC (FIXED)
-    // ==========================================
     
     async function loadAdminDataUI() {
-      // Setup Post Dropdown for Episodes
       const sel = document.getElementById('epPostSelect');
       sel.innerHTML = '<option value="">-- Select Anime --</option>' + appData.posts.map(p => \`<option value="\${p.id}">\${p.name}</option>\`).join('');
       
-      // Populate Delete Posts List
       const delList = document.getElementById('deleteList');
       delList.innerHTML = appData.posts.map(p => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
@@ -1479,13 +1468,11 @@ function renderFullAppHTML() {
         </div>
       \`).join('');
 
-      // Populate Settings (Will not show token to prevent HTML injection leak)
-      document.getElementById('cfgBotToken').value = ""; // Empty for safety
+      document.getElementById('cfgBotToken').value = ""; 
       document.getElementById('cfgChatId').value = "";
       document.getElementById('cfgTg').value = appData.settings?.channel_link || '';
-      document.getElementById('cfgPin').value = ""; // Safety
+      document.getElementById('cfgPin').value = ""; 
 
-      // FIX: Populate VIP Deletion List
       try {
         const vipRes = await adminFetch('/api/admin/vip');
         const vipData = await vipRes.json();
@@ -1498,7 +1485,6 @@ function renderFullAppHTML() {
         \`).join('');
       } catch(err) { console.error("VIP fetch failed"); }
 
-      // Populate Shorteners
       const shortList = document.getElementById('shortList');
       shortList.innerHTML = (appData.shorteners || []).map((s, i) => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
@@ -1507,7 +1493,6 @@ function renderFullAppHTML() {
         </div>
       \`).join('');
 
-      // Populate Paid Keys
       const paidList = document.getElementById('paidList');
       paidList.innerHTML = (appData.paid_requests || []).map((k, i) => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
@@ -1524,7 +1509,6 @@ function renderFullAppHTML() {
       const res = await fetch(\`/api/episodes?post_id=\${postId}\`);
       const data = await res.json();
       
-      // FIX: Episode list with Delete buttons properly displayed
       epList.innerHTML = data.episodes.map(e => \`
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); margin-bottom:4px; border-radius:6px;">
           <span style="font-size:12px; color:#fff; word-break:break-all;">\${e.season ? '[' + e.season + '] ' : ''}Ep \${e.label} - \${e.quality}</span>
@@ -1533,7 +1517,6 @@ function renderFullAppHTML() {
       \`).join('');
     }
 
-    // --- SECURE DELETIONS ---
     async function deletePost(id) {
       if(!confirm("Are you sure you want to delete this post and its episodes?")) return;
       const res = await adminFetch(\`/api/posts/\${id}\`, { method: 'DELETE' });
@@ -1555,7 +1538,6 @@ function renderFullAppHTML() {
       else alert("Auth failed");
     }
 
-    // --- SECURE ADDITIONS ---
     async function addShortener() {
       const domain = document.getElementById('cfgShDom').value.trim();
       const api_key = document.getElementById('cfgShKey').value.trim();
@@ -1596,10 +1578,6 @@ function renderFullAppHTML() {
       else alert("Auth failed");
     }
 
-    // Ek specific saved field ko explicitly clear/delete karta hai (baaki
-    // fields ko haath nahi lagata) - normal Save khaali field ko ignore
-    // karta hai (data-loss se bachne ke liye), isliye purana value delete
-    // karne ka alag, explicit tareeka chahiye
     async function clearSettingField(key) {
       if (!confirm('Ye saved value delete kar do?')) return;
       const res = await adminFetch('/api/settings', {
@@ -1610,9 +1588,6 @@ function renderFullAppHTML() {
         showToast('Cleared!');
         const fieldMap = { bot_token: 'cfgBotToken', chat_id: 'cfgChatId', channel_link: 'cfgTg', admin_pin: 'cfgPin' };
         if (fieldMap[key]) document.getElementById(fieldMap[key]).value = '';
-        // FIX: agar PIN clear/reset kiya, to session ka pin bhi turant naye
-        // (default) pin se sync karo - warna isi session ki agli koi bhi
-        // action purane PIN se fail hoti rahegi ("PIN check karo" error)
         if (key === 'admin_pin') sessionPin = 'admin123';
         await loadData();
       } else {
@@ -1626,10 +1601,6 @@ function renderFullAppHTML() {
       const bot_token = document.getElementById('cfgBotToken').value.trim();
       const chat_id = document.getElementById('cfgChatId').value.trim();
 
-      // FIX: In fields ko hamesha khaali dikhaya jaata hai (security ke liye),
-      // isliye khaali chhodne ka matlab "isko mat badlo" hona chahiye, "isko
-      // delete kar do" nahi - warna sirf ek field update karne par baaki
-      // (Bot Token, PIN waghera) khud-b-khud gayab ho jaate the.
       const settings = { channel_link };
       if (admin_pin) settings.admin_pin = admin_pin;
       if (bot_token) settings.bot_token = bot_token;
@@ -1641,19 +1612,13 @@ function renderFullAppHTML() {
       });
       if(res.ok) {
         showToast('Settings Saved!');
-        // FIX: agar naya PIN save kiya, to isi session ko turant naye PIN
-        // se sync karo - warna agli hi action "PIN check karo" bolke fail
-        // ho jaati thi (session abhi bhi purana PIN yaad rakhta tha)
         if (admin_pin) sessionPin = admin_pin;
         await loadData(); loadAdminDataUI();
       }
       else { alert('Save fail ho gaya - PIN check karo'); }
     }
 
-    // ==========================================
-    // UPLOAD & SAVE LOGIC
-    // ==========================================
-
+    // FIX: UPLOAD & SINGLE TELEGRAM POST LOGIC ADDED HERE
     let selectedImageFile = null;
     async function uploadTgImage() {
       const file = document.getElementById('pImgFile').files[0];
@@ -1670,7 +1635,9 @@ function renderFullAppHTML() {
       const genres = document.getElementById('pGenre').value.trim();
       const release = document.getElementById('pRelease').value.trim();
       const story = document.getElementById('pStory').value.trim();
+      
       if (!name) return alert('Anime name required!');
+      
       if (selectedImageFile) {
         showToast('Publishing...');
         const fd = new FormData();
@@ -1680,8 +1647,15 @@ function renderFullAppHTML() {
         fd.append('genres', genres);
         fd.append('release', release);
         fd.append('story', story);
+        
+        // Agar pehle se direct URL chipkaya hua tha to usko image_url mein bhejo
+        if(image_url && !image_url.startsWith("✓ Selected:")) {
+            fd.append('image_url', image_url);
+        }
+
         const res = await fetch('/api/posts', { method: 'POST', body: fd, headers: {'X-Admin-Pin': sessionPin} });
         const data = await res.json();
+        
         if(res.ok && data.success) {
             showToast('Published! Single message with your format');
             document.getElementById('pName').value = '';
@@ -1689,9 +1663,13 @@ function renderFullAppHTML() {
             document.getElementById('pImgFile').value = '';
             selectedImageFile = null;
             await loadData(); loadAdminDataUI();
-        } else { alert('Failed: ' + (data.error || 'Auth')); }
+        } else { 
+            alert('Failed: ' + (data.error || 'Auth Error')); 
+        }
         return;
       }
+      
+      // JSON mode (bina file uplaod kiye URL daalne par)
       const res = await adminFetch('/api/posts', {
         method: 'POST',
         body: JSON.stringify({ name, image_url, category, genres, release, story })
@@ -1787,4 +1765,3 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-            }
