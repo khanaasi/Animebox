@@ -54,7 +54,7 @@ export default {
     const sendTelegramNotification = async (settings, text, photoUrl = null) => {
       if (!settings.bot_token || !settings.chat_id) {
         console.log("⚠️ Telegram not sent: bot_token/chat_id missing in settings");
-        return;
+        return { ok: false, reason: "Bot Token ya Chat ID Settings mein set nahi hai" };
       }
       try {
         const tgForm = new FormData();
@@ -72,8 +72,13 @@ export default {
         if (!res.ok) {
           const errBody = await res.text();
           console.error("❌ Telegram send FAIL:", res.status, errBody);
+          return { ok: false, reason: errBody };
         }
-      } catch (err) { console.log("Telegram Error", err); }
+        return { ok: true };
+      } catch (err) {
+        console.log("Telegram Error", err);
+        return { ok: false, reason: String(err) };
+      }
     };
 
     // =========================================================================
@@ -359,9 +364,9 @@ export default {
       // hi reject kar deta hai (sirf photo jaati hai, details gayab ho jaati hain)
       const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const tgMsg = `Name: <b>${escHtml(newPost.name)}</b> ❞\n\nCategory:\n<b>${escHtml(newPost.category)}</b> ❞\n\nGenre: ${escHtml(hashGenres)}\nRelease: ${escHtml(newPost.release || '-')}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${escHtml(newPost.story)}`;
-      ctx.waitUntil(sendTelegramNotification(settings, tgMsg, newPost.image_url));
+      const tgResult = await sendTelegramNotification(settings, tgMsg, newPost.image_url);
 
-      return json({ success: true, post: newPost });
+      return json({ success: true, post: newPost, telegram: tgResult });
     }
 
     if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
@@ -482,12 +487,19 @@ export default {
           const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
           const encodedUrl = encodeURIComponent(targetUrl);
 
-          // Attempt 1: standard AdLinkFly-style with format=text (GPLinks, AdrinoLinks, etc.)
-          const attempts = [
-            `https://${domain}/api?api=${activeSh.api_key}&url=${encodedUrl}&format=text`,
+          // GPLinks jaise services ka asli API "api.gplinks.com" par hota hai,
+          // "gplinks.com" (dashboard domain) par nahi - agar admin ne "api."
+          // prefix ke bina domain daala hai, to wo variant bhi try karo
+          const apiDomain = domain.startsWith("api.") ? domain : "api." + domain;
+          const domainsToTry = [...new Set([apiDomain, domain])];
+
+          const attempts = [];
+          domainsToTry.forEach(d => {
+            // Attempt 1: standard AdLinkFly-style with format=text (GPLinks, AdrinoLinks, etc.)
+            attempts.push(`https://${d}/api?api=${activeSh.api_key}&url=${encodedUrl}&format=text`);
             // Attempt 2: kuch shorteners format=text param se error dete hain, bina uske JSON deta hai
-            `https://${domain}/api?api=${activeSh.api_key}&url=${encodedUrl}`,
-          ];
+            attempts.push(`https://${d}/api?api=${activeSh.api_key}&url=${encodedUrl}`);
+          });
 
           let shortLink = null;
           let lastRaw = "";
@@ -920,7 +932,7 @@ function renderFullAppHTML() {
         </div>
         
         <div id="tabShort" style="display:none;">
-          <div class="form-group"><label>Shortener Domain</label><input type="text" id="cfgShDom" class="form-control" placeholder="adrinolinks.in"></div>
+          <div class="form-group"><label>Shortener Domain</label><input type="text" id="cfgShDom" class="form-control" placeholder="gplinks.com ya api.gplinks.com"><small style="color:var(--text-muted); font-size:10px;">Dashboard ka domain (jaise gplinks.com) daalo - system khud api. wala version bhi try karega.</small></div>
           <div class="form-group"><label>API Key</label><input type="text" id="cfgShKey" class="form-control"></div>
           <button class="btn-action" onclick="addShortener()">Add Shortener</button>
           <div id="shortList" style="margin-top:12px; max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:5px;"></div>
@@ -1639,7 +1651,12 @@ function renderFullAppHTML() {
         body: JSON.stringify({ name, image_url, category, genres, release, story })
       });
       if(res.ok) {
-          showToast('Post Published & Sent to Telegram!');
+          const data = await res.json();
+          if (data.telegram && data.telegram.ok === false) {
+            alert('⚠️ Post save ho gaya, LEKIN Telegram par nahi gaya!\\n\\nWajah: ' + data.telegram.reason);
+          } else {
+            showToast('Post Published & Sent to Telegram!');
+          }
           document.getElementById('pName').value = '';
           document.getElementById('pImgUrl').value = '';
           await loadData(); loadAdminDataUI();
@@ -1724,4 +1741,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
-        }
+            }
