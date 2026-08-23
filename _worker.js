@@ -3,14 +3,14 @@
  * SINGLE SITE + APK EDITION - 1 SITE ONLY - 44/45 READY - ORIGINAL STRUCTURE PRESERVED
  * Includes: Auto-Detect Parser, Full Metadata, Telegram CDN, Dynamic VIP, Server Shorteners,
  * Category->Genre Filtering, Bot Notifications & Auto VIP Deletion.
- * FULLY FIXED: Deletions, Shorteners, Settings Clearing, Episodes, SEO, Security, & Telegram Single Post.
+ * FULLY FIXED: Deletions, Strict Shorteners, Settings Clearing, Episodes, SEO, Security, & Telegram Single Post.
  */
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const method = request.method;
-    const adminPinHeader = request.headers.get("X-Admin-Pin"); // SECURITY: Read Admin PIN from headers
+    const adminPinHeader = request.headers.get("X-Admin-Pin");
 
     const json = (data, status = 200) =>
       new Response(JSON.stringify(data), {
@@ -25,20 +25,19 @@ export default {
       }
       return defaultVal;
     };
+    
     const kvSet = async (key, val) => {
       if (env.ANIME_KV) {
         await env.ANIME_KV.put(key, JSON.stringify(val));
       }
     };
 
-    // SECURITY HELPER: Check if request is from real Admin
     const isAdmin = async () => {
       const s = (await kvGet("settings", {})) || {};
       const actualPin = s.admin_pin || "admin123";
       return adminPinHeader === actualPin;
     };
 
-    // Auto-Delete Expired Premium VIP Passes (Background Task)
     ctx.waitUntil((async () => {
       if (env.ANIME_KV) {
         let users = (await kvGet("premium_users", [])) || [];
@@ -50,10 +49,8 @@ export default {
       }
     })());
 
-    // Telegram Bot Notification Helper Function (For URL mode)
     const sendTelegramNotification = async (settings, text, photoUrl = null) => {
       if (!settings.bot_token || !settings.chat_id) {
-        console.log("⚠️ Telegram not sent: bot_token/chat_id missing in settings");
         return { ok: false, reason: "Bot Token ya Chat ID Settings mein set nahi hai" };
       }
       try {
@@ -71,18 +68,16 @@ export default {
         }
         if (!res.ok) {
           const errBody = await res.text();
-          console.error("❌ Telegram send FAIL:", res.status, errBody);
           return { ok: false, reason: errBody };
         }
         return { ok: true };
       } catch (err) {
-        console.log("Telegram Error", err);
         return { ok: false, reason: String(err) };
       }
     };
 
     // =========================================================================
-    // 🚀 PWA ENGINE: MANIFEST, SERVICE WORKER & APP ICONS (ORIGINAL 100% SCORE)
+    // 🚀 PWA ENGINE: MANIFEST, SERVICE WORKER & APP ICONS
     // =========================================================================
 
     if (url.pathname === "/manifest.json") {
@@ -108,35 +103,31 @@ export default {
         background_color: "#05080c",
         theme_color: "#00ff66",
         categories: ["entertainment", "video", "multimedia"],
-        iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",        related_applications: [
+        iarc_rating_id: "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
+        related_applications: [
           {
             platform: "webapp",
             url: "https://asianimes.in/manifest.json"
           }
         ],
         prefer_related_applications: false,
-        
         protocol_handlers: [
           { protocol: "web+anime", url: "/?stream=%s" }
         ],
-        
         launch_handler: {
           client_mode: "navigate-existing"
         },
-        
         file_handlers: [
           {
             action: "/",
             accept: { "application/json": [".abx", ".json"] }
           }
         ],
-        
         share_target: {
           action: "/",
           method: "GET",
           params: { title: "title", text: "text", url: "url" }
         },
-        
         widgets: [
           {
             name: "AnimeBox Widget",
@@ -160,15 +151,12 @@ export default {
             ]
           }
         ],
-        
         edge_side_panel: {
           preferred_width: 400
         },
-        
         note_taking: {
           new_note_url: "/?action=new_note"
         },
-        
         icons: [
           { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
           { src: "/icon-192-maskable.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
@@ -325,7 +313,6 @@ export default {
         channel_link: "https://t.me/"
       })) || {};
       
-      // FIX: HIDDEN ADMIN SECRETS FROM PUBLIC API
       const safeSettings = { ...settings };
       delete safeSettings.admin_pin;
       delete safeSettings.bot_token;
@@ -335,8 +322,6 @@ export default {
       return json({ posts, settings: safeSettings, shorteners, paid_requests });
     }
 
-    // SECURE ADMIN APIs - Check PIN first
-
     if (url.pathname === "/api/posts" && method === "POST") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       
@@ -344,7 +329,6 @@ export default {
       let file = null;
       const contentType = request.headers.get("content-type") || "";
       
-      // FIX: Upload image & Details single send logic
       if (contentType.includes("multipart/form-data") || contentType.includes("form-data")) {
         const formData = await request.formData();
         file = formData.get("file");
@@ -360,10 +344,8 @@ export default {
 
       let posts = (await kvGet("posts", [])) || [];
       const settings = (await kvGet("settings", {})) || {};
-      
       let finalImageUrl = body.image_url || "";
       
-      // If file is present - send ONE message with original format
       if (file && file.size > 0) {
         const botToken = settings.bot_token || env.TELEGRAM_BOT_TOKEN;
         const chatId = settings.chat_id || env.TELEGRAM_CHAT_ID;
@@ -479,9 +461,10 @@ export default {
       return json({ success: true });
     }
 
-    // FIX: ADVANCED SHORTENER LOGIC WITH USER-AGENT & MULTI-API BYPASS
+    // STRICT SHORTENER LOGIC
     if (url.pathname === "/api/get-link") {
-      const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
+      const epId = url.searchParams.get("ep_id"); 
+      const postId = url.searchParams.get("post_id");
       const userKey = url.searchParams.get("key");
       const deviceId = url.searchParams.get("device_id");
       
@@ -491,7 +474,6 @@ export default {
       const targetUrl = ep.download_link || ep.play_link; 
       if (!targetUrl) return json({ error: "Empty link" }, 400);
       
-      // VIP CHECK (Premium = Direct Link)
       let isPremium = false;
       const premiumUsers = (await kvGet("premium_users", [])) || [];
       if (userKey) {
@@ -507,7 +489,6 @@ export default {
 
       if (isPremium) return json({ direct: true, url: targetUrl, premium: true });
 
-      // FREE USERS (Shortener Logic Fix)
       const shorteners = (await kvGet("shorteners", [])) || [];
       let activeShorteners = shorteners;
       if (activeShorteners.length === 0) {
@@ -515,8 +496,6 @@ export default {
         if (s.shorteners && s.shorteners.length > 0) activeShorteners = s.shorteners;
       }
       
-      let debugLogs = [];
-
       if (activeShorteners.length > 0) {
         const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
 
@@ -566,11 +545,9 @@ export default {
               const shortLink = extractShortUrl(txt);
               if (shortLink) {
                 return json({ direct: false, url: shortLink, shortener: domain });
-              } else {
-                debugLogs.push({ url: apiUrl, response: txt.substring(0, 100) });
               }
             } catch (e) {
-              debugLogs.push({ url: apiUrl, error: e.message });
+              // Ignore inside loop to try next API endpoint
             }
           }
           
@@ -582,12 +559,15 @@ export default {
           } catch (e) {}
           
         } catch (err) {
-          debugLogs.push({ main_error: err.message });
+           // Shortener setup failed
         }
+        
+        // STRICT RULE: User MUST NOT bypass shortener. If API fails, return error.
+        return json({ error: "Shortener service is currently busy or down. Please try again in 5 minutes." }, 500);
       }
       
-      // Fallback agar API block kar de
-      return json({ direct: true, url: targetUrl, fallback: true, debug: debugLogs });
+      // If NO shorteners are setup by Admin, give direct link
+      return json({ direct: true, url: targetUrl });
     }
 
     if (url.pathname === "/api/decrypt-link") {
@@ -679,7 +659,6 @@ export default {
       return json({ success: true });
     }
 
-    // Render Frontend HTML
     return new Response(renderFullAppHTML(), {
       headers: { "Content-Type": "text/html;charset=UTF-8" }
     });
@@ -1364,7 +1343,7 @@ function renderFullAppHTML() {
       if (data.url) {
         window.open(data.url, '_blank');
       } else {
-        showToast('Download link error: ' + (data.error || 'Check Link'));
+        showToast(data.error || 'Check Link');
       }
     }
 
@@ -1618,7 +1597,6 @@ function renderFullAppHTML() {
       else { alert('Save fail ho gaya - PIN check karo'); }
     }
 
-    // FIX: UPLOAD & SINGLE TELEGRAM POST LOGIC ADDED HERE
     let selectedImageFile = null;
     async function uploadTgImage() {
       const file = document.getElementById('pImgFile').files[0];
@@ -1648,7 +1626,6 @@ function renderFullAppHTML() {
         fd.append('release', release);
         fd.append('story', story);
         
-        // Agar pehle se direct URL chipkaya hua tha to usko image_url mein bhejo
         if(image_url && !image_url.startsWith("✓ Selected:")) {
             fd.append('image_url', image_url);
         }
@@ -1669,7 +1646,6 @@ function renderFullAppHTML() {
         return;
       }
       
-      // JSON mode (bina file uplaod kiye URL daalne par)
       const res = await adminFetch('/api/posts', {
         method: 'POST',
         body: JSON.stringify({ name, image_url, category, genres, release, story })
@@ -1765,3 +1741,4 @@ function renderFullAppHTML() {
   </script>
 </body>
 </html>`;
+    }
