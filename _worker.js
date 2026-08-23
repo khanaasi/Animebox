@@ -336,7 +336,7 @@ export default {
     }
 
     // SECURE ADMIN APIs - Check PIN first
-    
+
     if (url.pathname === "/api/posts" && method === "POST") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       
@@ -352,7 +352,6 @@ export default {
         body.genres = formData.get("genres") || "";
         body.release = formData.get("release") || "";
         body.story = formData.get("story") || "";
-        body.season = formData.get("season") || formData.get("category") || "";
         body.image_url = formData.get("image_url") || "";
       } else {
         body = await request.json();
@@ -362,39 +361,35 @@ export default {
       const settings = (await kvGet("settings", {})) || {};
       
       let finalImageUrl = body.image_url || "";
-      let telegramResult = { ok: true };
       
-      if (file && typeof file === "object" && file.size > 0) {
+      // If file is present - send ONE message with YOUR original format (like app.py single send)
+      if (file && file.size > 0) {
         const botToken = settings.bot_token || env.TELEGRAM_BOT_TOKEN;
         const chatId = settings.chat_id || env.TELEGRAM_CHAT_ID;
-        
         if (!botToken || !chatId) {
           return json({ error: "Bot Token / Chat ID Settings me set nahi hai" }, 400);
         }
         
-        const seasonVal = body.season || body.category || "01";
-        const caption = "🎬 " + body.name + "\n\n📺 Season: " + seasonVal + "\n🎭 Genre: " + (body.genres || "-") + "\n📅 Release: " + (body.release || "-");
+        // YOUR ORIGINAL FORMAT - same as before, no season variable
+        let hashGenres = body.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
+        const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const caption = "Name: <b>" + escHtml(body.name) + "</b> ❞\n\nCategory:\n<b>" + escHtml(body.category) + "</b> ❞\n\nGenre: " + escHtml(hashGenres) + "\nRelease: " + escHtml(body.release || '-') + "\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 " + escHtml(body.story);
         
         try {
           const tgForm = new FormData();
           tgForm.append("chat_id", chatId);
           tgForm.append("photo", file);
           tgForm.append("caption", caption);
-          
+          tgForm.append("parse_mode", "HTML");
           const tgRes = await fetch("https://api.telegram.org/bot" + botToken + "/sendPhoto", { method: "POST", body: tgForm });
           const tgData = await tgRes.json();
-          
-          if (!tgData.ok) {
-            return json({ error: "Telegram error: " + (tgData.description || "unknown") }, 400);
-          }
-          
+          if (!tgData.ok) return json({ error: "Telegram: " + tgData.description }, 400);
           const bestPhoto = tgData.result.photo.pop();
           const fileRes = await fetch("https://api.telegram.org/bot" + botToken + "/getFile?file_id=" + bestPhoto.file_id);
           const fileData = await fileRes.json();
           finalImageUrl = "https://api.telegram.org/file/bot" + botToken + "/" + fileData.result.file_path;
-          
         } catch (err) {
-          return json({ error: "Upload failed: " + err.message }, 500);
+          return json({ error: "Upload fail: " + err.message }, 500);
         }
       }
       
@@ -406,7 +401,6 @@ export default {
         genres: body.genres || "",
         story: body.story || "",
         release: body.release || "",
-        season: body.season || "",
         updatedAt: Date.now()
       };
       
@@ -414,18 +408,20 @@ export default {
       posts.unshift(newPost);
       await kvSet("posts", posts);
 
+      // If no file (URL case) - use your original separate notification logic
+      let telegramResult = { ok: true };
       if (!file) {
-        let hashGenres = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
-        const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const tgMsg = "Name: <b>" + escHtml(newPost.name) + "</b>\nCategory: <b>" + escHtml(newPost.category) + "</b>\nGenre: " + escHtml(hashGenres) + "\nRelease: " + escHtml(newPost.release || '-') + "\n\n🔥 Anime By Asi";
+        let hashGenres2 = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
+        const escHtml2 = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const tgMsg = "Name: <b>" + escHtml2(newPost.name) + "</b> ❞\n\nCategory:\n<b>" + escHtml2(newPost.category) + "</b> ❞\n\nGenre: " + escHtml2(hashGenres2) + "\nRelease: " + escHtml2(newPost.release || '-') + "\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 " + escHtml2(newPost.story);
         telegramResult = await sendTelegramNotification(settings, tgMsg, newPost.image_url);
       }
 
       return json({ success: true, post: newPost, telegram: telegramResult });
     }
 
-    
-if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
+    if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
+
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const id = url.pathname.split("/").pop();
       let posts = (await kvGet("posts", [])) || [];
@@ -487,7 +483,7 @@ if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
       return json({ success: true });
     }
 
-    
+
     if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
       const userKey = url.searchParams.get("key");
@@ -510,8 +506,6 @@ if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
         }
       }
       if (isPremium) return json({ direct: true, url: targetUrl, premium: true });
-
-      // SHORTENER - WORKING FOR APK + SITE
       const shorteners = (await kvGet("shorteners", [])) || [];
       let activeShorteners = shorteners;
       if (activeShorteners.length === 0) {
@@ -526,10 +520,10 @@ if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
           if (t.startsWith("http")) return t;
           try {
             const j = JSON.parse(t);
-            const cand = j.shortenedUrl || j.short_url || j.shortUrl || j.url || j.link || j.data || j.result || j.shortened_url;
+            const cand = j.shortenedUrl || j.short_url || j.shortUrl || j.url || j.link || j.data || j.result;
             if (typeof cand === "string" && cand.startsWith("http")) return cand;
             if (j.data && typeof j.data === "object") {
-              const inner = j.data.url || j.data.short_url || j.data.shortenedUrl;
+              const inner = j.data.url || j.data.short_url;
               if (inner && inner.startsWith("http")) return inner;
             }
           } catch (e) {}
@@ -540,7 +534,6 @@ if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
           const rawDomain = activeSh.dashboard_url || activeSh.domain || "";
           const domain = rawDomain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "").split("/")[0];
           const apiKey = activeSh.api_key || activeSh.apiKey;
-          if (!domain || !apiKey) throw new Error("bad config");
           const enc = encodeURIComponent(targetUrl);
           const apiDomain = domain.startsWith("api.") ? domain : "api." + domain;
           const tryDomains = [...new Set([apiDomain, domain])];
@@ -557,14 +550,13 @@ if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
               if (shortLink) return json({ direct: false, url: shortLink, shortener: domain });
             } catch (e) {}
           }
-          // proxy fallback
           try {
             const pr = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(attempts[0])}`);
             const pd = await pr.json();
             const sl = pd.contents ? extractShortUrl(pd.contents) : null;
             if (sl) return json({ direct: false, url: sl, via: "proxy" });
           } catch (e) {}
-        } catch (err) { console.error("short err", err); }
+        } catch (err) {}
       }
       return json({ direct: true, url: targetUrl, fallback: true });
     }
@@ -1667,14 +1659,8 @@ function renderFullAppHTML() {
       const file = document.getElementById('pImgFile').files[0];
       if (!file) return;
       selectedImageFile = file;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const preview = document.getElementById('imgPreview');
-        if (preview) { preview.src = e.target.result; preview.style.display = 'block'; }
-        document.getElementById('pImgUrl').value = "✓ Image selected - will upload with details on Publish";
-      };
-      reader.readAsDataURL(file);
-      showToast('Image selected! Ab details bharo aur Publish karo');
+      document.getElementById('pImgUrl').value = "✓ Selected: " + file.name + " (Publish pe jayega)";
+      showToast('Image selected - ab details bharo');
     }
 
     async function savePost() {
@@ -1684,11 +1670,9 @@ function renderFullAppHTML() {
       const genres = document.getElementById('pGenre').value.trim();
       const release = document.getElementById('pRelease').value.trim();
       const story = document.getElementById('pStory').value.trim();
-
       if (!name) return alert('Anime name required!');
-
       if (selectedImageFile) {
-        showToast('Publishing with image + details (single message)...');
+        showToast('Publishing...');
         const fd = new FormData();
         fd.append('file', selectedImageFile);
         fd.append('name', name);
@@ -1696,25 +1680,18 @@ function renderFullAppHTML() {
         fd.append('genres', genres);
         fd.append('release', release);
         fd.append('story', story);
-        fd.append('season', category);
-        
         const res = await fetch('/api/posts', { method: 'POST', body: fd, headers: {'X-Admin-Pin': sessionPin} });
         const data = await res.json();
         if(res.ok && data.success) {
-            showToast('Post Published & Sent to Telegram with details!');
+            showToast('Published! Single message with your format');
             document.getElementById('pName').value = '';
             document.getElementById('pImgUrl').value = '';
             document.getElementById('pImgFile').value = '';
-            const prev = document.getElementById('imgPreview');
-            if (prev) prev.style.display = 'none';
             selectedImageFile = null;
             await loadData(); loadAdminDataUI();
-        } else {
-            alert('Failed: ' + (data.error || 'Auth failed'));
-        }
+        } else { alert('Failed: ' + (data.error || 'Auth')); }
         return;
       }
-
       const res = await adminFetch('/api/posts', {
         method: 'POST',
         body: JSON.stringify({ name, image_url, category, genres, release, story })
@@ -1722,7 +1699,7 @@ function renderFullAppHTML() {
       if(res.ok) {
           const data = await res.json();
           if (data.telegram && data.telegram.ok === false) {
-            alert('⚠️ Post save ho gaya, LEKIN Telegram par nahi gaya!\n\nWajah: ' + data.telegram.reason);
+            alert('⚠️ Post save ho gaya, LEKIN Telegram par nahi gaya!\\n\\nWajah: ' + data.telegram.reason);
           } else {
             showToast('Post Published & Sent to Telegram!');
           }
