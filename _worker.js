@@ -336,40 +336,96 @@ export default {
     }
 
     // SECURE ADMIN APIs - Check PIN first
+    
     if (url.pathname === "/api/posts" && method === "POST") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
-      const body = await request.json();
+      
+      let body = {};
+      let file = null;
+      const contentType = request.headers.get("content-type") || "";
+      
+      if (contentType.includes("multipart/form-data") || contentType.includes("form-data")) {
+        const formData = await request.formData();
+        file = formData.get("file");
+        body.name = formData.get("name") || "Untitled";
+        body.category = formData.get("category") || "Uncategorized";
+        body.genres = formData.get("genres") || "";
+        body.release = formData.get("release") || "";
+        body.story = formData.get("story") || "";
+        body.season = formData.get("season") || formData.get("category") || "";
+        body.image_url = formData.get("image_url") || "";
+      } else {
+        body = await request.json();
+      }
+
       let posts = (await kvGet("posts", [])) || [];
+      const settings = (await kvGet("settings", {})) || {};
+      
+      let finalImageUrl = body.image_url || "";
+      let telegramResult = { ok: true };
+      
+      if (file && typeof file === "object" && file.size > 0) {
+        const botToken = settings.bot_token || env.TELEGRAM_BOT_TOKEN;
+        const chatId = settings.chat_id || env.TELEGRAM_CHAT_ID;
+        
+        if (!botToken || !chatId) {
+          return json({ error: "Bot Token / Chat ID Settings me set nahi hai" }, 400);
+        }
+        
+        const seasonVal = body.season || body.category || "01";
+        const caption = "🎬 " + body.name + "\n\n📺 Season: " + seasonVal + "\n🎭 Genre: " + (body.genres || "-") + "\n📅 Release: " + (body.release || "-");
+        
+        try {
+          const tgForm = new FormData();
+          tgForm.append("chat_id", chatId);
+          tgForm.append("photo", file);
+          tgForm.append("caption", caption);
+          
+          const tgRes = await fetch("https://api.telegram.org/bot" + botToken + "/sendPhoto", { method: "POST", body: tgForm });
+          const tgData = await tgRes.json();
+          
+          if (!tgData.ok) {
+            return json({ error: "Telegram error: " + (tgData.description || "unknown") }, 400);
+          }
+          
+          const bestPhoto = tgData.result.photo.pop();
+          const fileRes = await fetch("https://api.telegram.org/bot" + botToken + "/getFile?file_id=" + bestPhoto.file_id);
+          const fileData = await fileRes.json();
+          finalImageUrl = "https://api.telegram.org/file/bot" + botToken + "/" + fileData.result.file_path;
+          
+        } catch (err) {
+          return json({ error: "Upload failed: " + err.message }, 500);
+        }
+      }
+      
       const newPost = {
         id: body.id || "p_" + Date.now(),
         name: body.name || "Untitled",
-        image_url: body.image_url || "",
+        image_url: finalImageUrl || body.image_url || "",
         category: body.category || "Uncategorized",
         genres: body.genres || "",
         story: body.story || "",
         release: body.release || "",
+        season: body.season || "",
         updatedAt: Date.now()
       };
+      
       posts = posts.filter(p => p.id !== newPost.id);
       posts.unshift(newPost);
       await kvSet("posts", posts);
 
-      const settings = (await kvGet("settings", {})) || {};
-      // Genres comma/dot se separate hote hain, space se nahi (multi-word
-      // genre jaise "Dark Fantasy" ko todna nahi hai) - hashtag ke liye
-      // internal space bhi hata do (Telegram hashtags mein space nahi chalta)
-      let hashGenres = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
-      // Telegram HTML parse_mode ke liye special characters escape karna zaroori hai,
-      // warna agar name/story mein <, >, ya & aa jaaye to Telegram poori caption
-      // hi reject kar deta hai (sirf photo jaati hai, details gayab ho jaati hain)
-      const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const tgMsg = `Name: <b>${escHtml(newPost.name)}</b> ❞\n\nCategory:\n<b>${escHtml(newPost.category)}</b> ❞\n\nGenre: ${escHtml(hashGenres)}\nRelease: ${escHtml(newPost.release || '-')}\n\n🔥 ╰┈➤ ♡𝙰𝙽𝙸𝙼𝙴 𝙱𝚈_𝙰𝚂𝙸✨\n⚓➠★★: @ASIgroup\n\n📖 ${escHtml(newPost.story)}`;
-      const tgResult = await sendTelegramNotification(settings, tgMsg, newPost.image_url);
+      if (!file) {
+        let hashGenres = newPost.genres.split(/[,.]+/).map(g => g.trim()).filter(g => g).map(g => '#' + g.replace(/\s+/g, '')).join(' ');
+        const escHtml = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const tgMsg = "Name: <b>" + escHtml(newPost.name) + "</b>\nCategory: <b>" + escHtml(newPost.category) + "</b>\nGenre: " + escHtml(hashGenres) + "\nRelease: " + escHtml(newPost.release || '-') + "\n\n🔥 Anime By Asi";
+        telegramResult = await sendTelegramNotification(settings, tgMsg, newPost.image_url);
+      }
 
-      return json({ success: true, post: newPost, telegram: tgResult });
+      return json({ success: true, post: newPost, telegram: telegramResult });
     }
 
-    if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
+    
+if (url.pathname.startsWith("/api/posts/") && method === "DELETE") {
       if (!(await isAdmin())) return json({ error: "Unauthorized" }, 401);
       const id = url.pathname.split("/").pop();
       let posts = (await kvGet("posts", [])) || [];
@@ -431,35 +487,31 @@ export default {
       return json({ success: true });
     }
 
+    
     if (url.pathname === "/api/get-link") {
       const epId = url.searchParams.get("ep_id"); const postId = url.searchParams.get("post_id");
-      const userEmail = url.searchParams.get("email"); const userKey = url.searchParams.get("key");
+      const userKey = url.searchParams.get("key");
       const deviceId = url.searchParams.get("device_id");
-      
       const episodes = (await kvGet(`ep_${postId}`, [])) || []; 
       const ep = episodes.find(e => e.id === epId);
       if (!ep) return json({ error: "Episode not found" }, 404);
       const targetUrl = ep.download_link || ep.play_link; 
       if (!targetUrl) return json({ error: "Empty link" }, 400);
-      
-      // VIP CHECK (Premium = Direct Link)
       let isPremium = false;
       const premiumUsers = (await kvGet("premium_users", [])) || [];
       if (userKey) {
         const user = premiumUsers.find(u => u.key === userKey || u.email === userKey);
         if (user && new Date(user.expires_at) > new Date()) {
           isPremium = true;
-          // Device lock logic kept intact
           if (deviceId) {
             if (!user.device_id) { user.device_id = deviceId; await kvSet("premium_users", premiumUsers); }
-            else if (user.device_id !== deviceId) isPremium = false; // Locked to other device
+            else if (user.device_id !== deviceId) isPremium = false;
           }
         }
       }
+      if (isPremium) return json({ direct: true, url: targetUrl, premium: true });
 
-      if (isPremium) return json({ direct: true, url: targetUrl });
-
-      // FREE USERS (Shortener Logic)
+      // SHORTENER - WORKING FOR APK + SITE
       const shorteners = (await kvGet("shorteners", [])) || [];
       let activeShorteners = shorteners;
       if (activeShorteners.length === 0) {
@@ -468,66 +520,57 @@ export default {
       }
       if (activeShorteners.length > 0) {
         const activeSh = activeShorteners[Math.floor(Math.random() * activeShorteners.length)];
-
-        // Kai shortener services JSON return karte hain (jaise
-        // {"status":"success","shortenedUrl":"https://..."}), sirf plain
-        // text nahi - dono format handle karo.
         const extractShortUrl = (raw) => {
-          const trimmed = raw.trim();
-          if (trimmed.startsWith("http")) return trimmed;
+          if (!raw) return null;
+          const t = raw.trim();
+          if (t.startsWith("http")) return t;
           try {
-            const j = JSON.parse(trimmed);
-            const candidate = j.shortenedUrl || j.short_url || j.shortUrl || j.url || j.data || j.result;
-            if (typeof candidate === "string" && candidate.startsWith("http")) return candidate;
-          } catch (_e) { /* not JSON, ignore */ }
-          return null;
+            const j = JSON.parse(t);
+            const cand = j.shortenedUrl || j.short_url || j.shortUrl || j.url || j.link || j.data || j.result || j.shortened_url;
+            if (typeof cand === "string" && cand.startsWith("http")) return cand;
+            if (j.data && typeof j.data === "object") {
+              const inner = j.data.url || j.data.short_url || j.data.shortenedUrl;
+              if (inner && inner.startsWith("http")) return inner;
+            }
+          } catch (e) {}
+          const m = t.match(/https?:\/\/[^\s"']+/);
+          return m ? m[0] : null;
         };
-
         try {
-          const domain = activeSh.domain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "");
-          const encodedUrl = encodeURIComponent(targetUrl);
-
-          // GPLinks jaise services ka asli API "api.gplinks.com" par hota hai,
-          // "gplinks.com" (dashboard domain) par nahi - agar admin ne "api."
-          // prefix ke bina domain daala hai, to wo variant bhi try karo
+          const rawDomain = activeSh.dashboard_url || activeSh.domain || "";
+          const domain = rawDomain.replace(/^(https?:\/\/)?(www\.)?/, "").replace(/\/$/, "").split("/")[0];
+          const apiKey = activeSh.api_key || activeSh.apiKey;
+          if (!domain || !apiKey) throw new Error("bad config");
+          const enc = encodeURIComponent(targetUrl);
           const apiDomain = domain.startsWith("api.") ? domain : "api." + domain;
-          const domainsToTry = [...new Set([apiDomain, domain])];
-
+          const tryDomains = [...new Set([apiDomain, domain])];
           const attempts = [];
-          domainsToTry.forEach(d => {
-            // Attempt 1: standard AdLinkFly-style with format=text (GPLinks, AdrinoLinks, etc.)
-            attempts.push(`https://${d}/api?api=${activeSh.api_key}&url=${encodedUrl}&format=text`);
-            // Attempt 2: kuch shorteners format=text param se error dete hain, bina uske JSON deta hai
-            attempts.push(`https://${d}/api?api=${activeSh.api_key}&url=${encodedUrl}`);
+          tryDomains.forEach(d => {
+            attempts.push(`https://${d}/api?api=${apiKey}&url=${enc}&format=text`);
+            attempts.push(`https://${d}/api?api=${apiKey}&url=${enc}`);
           });
-
-          let shortLink = null;
-          let lastRaw = "";
-          for (const apiEndpoint of attempts) {
+          for (const apiUrl of attempts) {
             try {
-              const res = await fetch(apiEndpoint);
-              const rawBody = await res.text();
-              lastRaw = rawBody;
-              shortLink = extractShortUrl(rawBody);
-              if (shortLink) break;
-            } catch (_e) { /* try next attempt */ }
+              const r = await fetch(apiUrl);
+              const txt = await r.text();
+              const shortLink = extractShortUrl(txt);
+              if (shortLink) return json({ direct: false, url: shortLink, shortener: domain });
+            } catch (e) {}
           }
-          if (shortLink) return json({ direct: false, url: shortLink });
-          console.log("⚠️ Shortener direct calls didn't return a usable link. Raw response:", lastRaw.slice(0, 300));
-
-          const proxyRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(attempts[0])}`);
-          const proxyData = await proxyRes.json();
-          const proxyShortLink = proxyData.contents ? extractShortUrl(proxyData.contents) : null;
-          if (proxyShortLink) return json({ direct: false, url: proxyShortLink });
-          console.log("⚠️ Shortener proxy call also failed. Raw contents:", (proxyData.contents || "").slice(0, 300));
-        } catch (err) { console.error("Shortener failed", err); }
+          // proxy fallback
+          try {
+            const pr = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(attempts[0])}`);
+            const pd = await pr.json();
+            const sl = pd.contents ? extractShortUrl(pd.contents) : null;
+            if (sl) return json({ direct: false, url: sl, via: "proxy" });
+          } catch (e) {}
+        } catch (err) { console.error("short err", err); }
       }
-      
-      // Fallback
-      return json({ direct: true, url: targetUrl });
+      return json({ direct: true, url: targetUrl, fallback: true });
     }
 
     if (url.pathname === "/api/decrypt-link") {
+
       const code = url.searchParams.get("code");
       const paidRequests = (await kvGet("paid_requests", [])) || [];
       const item = paidRequests.find(r => r.password === code);
@@ -1619,21 +1662,19 @@ function renderFullAppHTML() {
     // UPLOAD & SAVE LOGIC
     // ==========================================
 
+    let selectedImageFile = null;
     async function uploadTgImage() {
       const file = document.getElementById('pImgFile').files[0];
       if (!file) return;
-      showToast('Uploading to Telegram Channel...');
-      const fd = new FormData();
-      fd.append('file', file);
-      
-      const res = await fetch('/api/upload-telegram', { method: 'POST', body: fd, headers: {'X-Admin-Pin': sessionPin} });
-      const data = await res.json();
-      if (data.url) {
-        document.getElementById('pImgUrl').value = data.url;
-        showToast('Image Uploaded to Telegram!');
-      } else {
-        showToast('Upload failed: ' + (data.error || 'Check Bot Settings'));
-      }
+      selectedImageFile = file;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const preview = document.getElementById('imgPreview');
+        if (preview) { preview.src = e.target.result; preview.style.display = 'block'; }
+        document.getElementById('pImgUrl').value = "✓ Image selected - will upload with details on Publish";
+      };
+      reader.readAsDataURL(file);
+      showToast('Image selected! Ab details bharo aur Publish karo');
     }
 
     async function savePost() {
@@ -1646,6 +1687,34 @@ function renderFullAppHTML() {
 
       if (!name) return alert('Anime name required!');
 
+      if (selectedImageFile) {
+        showToast('Publishing with image + details (single message)...');
+        const fd = new FormData();
+        fd.append('file', selectedImageFile);
+        fd.append('name', name);
+        fd.append('category', category);
+        fd.append('genres', genres);
+        fd.append('release', release);
+        fd.append('story', story);
+        fd.append('season', category);
+        
+        const res = await fetch('/api/posts', { method: 'POST', body: fd, headers: {'X-Admin-Pin': sessionPin} });
+        const data = await res.json();
+        if(res.ok && data.success) {
+            showToast('Post Published & Sent to Telegram with details!');
+            document.getElementById('pName').value = '';
+            document.getElementById('pImgUrl').value = '';
+            document.getElementById('pImgFile').value = '';
+            const prev = document.getElementById('imgPreview');
+            if (prev) prev.style.display = 'none';
+            selectedImageFile = null;
+            await loadData(); loadAdminDataUI();
+        } else {
+            alert('Failed: ' + (data.error || 'Auth failed'));
+        }
+        return;
+      }
+
       const res = await adminFetch('/api/posts', {
         method: 'POST',
         body: JSON.stringify({ name, image_url, category, genres, release, story })
@@ -1653,7 +1722,7 @@ function renderFullAppHTML() {
       if(res.ok) {
           const data = await res.json();
           if (data.telegram && data.telegram.ok === false) {
-            alert('⚠️ Post save ho gaya, LEKIN Telegram par nahi gaya!\\n\\nWajah: ' + data.telegram.reason);
+            alert('⚠️ Post save ho gaya, LEKIN Telegram par nahi gaya!\n\nWajah: ' + data.telegram.reason);
           } else {
             showToast('Post Published & Sent to Telegram!');
           }
